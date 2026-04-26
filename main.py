@@ -20,7 +20,7 @@ GOOGLE_JSON = os.getenv("GOOGLE_DRIVE_CREDENTIALS")
 ID_PASTA_DRIVE = "11H5X-G6Bn6K1Ek3hSKWmUuvhaagjpOny"
 
 def upload_to_drive(file_path, file_name):
-    """Faz o upload do arquivo para o Google Drive tratando erros de cota."""
+    """Faz o upload do arquivo para o Google Drive."""
     try:
         info = json.loads(GOOGLE_JSON)
         creds = service_account.Credentials.from_service_account_info(info)
@@ -32,7 +32,6 @@ def upload_to_drive(file_path, file_name):
         }
         media = MediaFileUpload(file_path, resumable=True)
         
-        # supportsAllDrives=True é essencial para Contas de Serviço em pastas compartilhadas
         service.files().create(
             body=file_metadata, 
             media_body=media, 
@@ -45,32 +44,27 @@ def upload_to_drive(file_path, file_name):
         return False
 
 def extrair(driver, wait, pasta_download, nome_unidade):
-    """Executa o fluxo de exportação de inadimplentes para a unidade atual."""
+    """Executa o fluxo de exportação de inadimplentes."""
     print(f"--- Iniciando extração para: {nome_unidade} ---")
     
-    # 1. Dashboard
     xpath_dash = "//div[contains(@class, 'acesso-botao-passo')]//span[contains(text(), 'Dashboard')]"
     dash = wait.until(EC.presence_of_element_located((By.XPATH, xpath_dash)))
     driver.execute_script("arguments[0].scrollIntoView();", dash)
     time.sleep(2)
     driver.execute_script("arguments[0].click();", dash)
     
-    # 2. Detalhes Inadimplentes
     print("Abrindo detalhes...")
     detalhes = wait.until(EC.presence_of_element_located((By.ID, "detalhesModalClientesInadimplentes")))
     driver.execute_script("arguments[0].click();", detalhes)
     
-    # 3. Ícone de Download
     print("Clicando em exportar...")
     export = wait.until(EC.presence_of_element_located((By.XPATH, "//mat-icon[contains(text(), 'get_app')]")))
     driver.execute_script("arguments[0].click();", export)
     
-    # 4. Botão Confirmar no Modal
     print("Confirmando exportação...")
     confirm = wait.until(EC.presence_of_element_located((By.ID, "confirmaModalCommon")))
     driver.execute_script("arguments[0].click();", confirm)
     
-    # 5. Espera de Download
     print("Aguardando processamento e download (30s)...")
     time.sleep(30) 
     
@@ -86,12 +80,10 @@ def extrair(driver, wait, pasta_download, nome_unidade):
                 print(f"✅ Arquivo enviado ao Drive: {novo_nome}")
                 baixou = True
             
-            # Limpa a pasta temporária do GitHub
             os.remove(caminho_total)
     
     if not baixou: print("⚠️ Alerta: Nenhum arquivo de download detectado.")
     
-    # 6. Fechar Modal
     close_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//mat-icon[text()='close']")))
     driver.execute_script("arguments[0].click();", close_btn)
     time.sleep(3)
@@ -104,7 +96,6 @@ chrome_options.add_argument("--disable-dev-shm-usage")
 chrome_options.add_argument("--window-size=1920,1080")
 chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-# Pasta temporária para downloads no servidor Linux do GitHub
 temp_dir = os.path.join(os.getcwd(), "downloads")
 if not os.path.exists(temp_dir): os.makedirs(temp_dir)
 
@@ -116,20 +107,33 @@ chrome_options.add_experimental_option("prefs", {
 })
 
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-wait = WebDriverWait(driver, 40) # Espera generosa para ambientes cloud
+wait = WebDriverWait(driver, 40)
 
 # ================= EXECUÇÃO PRINCIPAL =================
 try:
     print("Acessando a página de login...")
     driver.get("https://evo5.w12app.com.br/#/acesso/allpfit/autenticacao")
     
-    user_input = wait.until(EC.visibility_of_element_located((By.ID, "usuario")))
-    pass_input = driver.find_element(By.ID, "senha")
+    # 1. Garante que o Angular carregou a tela de login lendo o texto da tela
+    print("Aguardando o Angular renderizar a tela...")
+    wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Que bom ter você aqui')]")))
+    time.sleep(2) # Pausa extra para a animação do formulário
+    
+    # 2. Busca os campos pela presença no DOM (ignora se estão invisíveis momentaneamente)
+    user_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@id='usuario']")))
+    pass_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@id='senha']")))
     
     print("Preenchendo credenciais...")
-    # Dispara eventos de input e change para garantir que o Angular valide os campos
-    js_fill = "arguments[0].value=arguments[1]; arguments[0].dispatchEvent(new Event('input', { bubbles: true })); arguments[0].dispatchEvent(new Event('change', { bubbles: true }));"
+    # 3. Força o foco, injeta o valor e simula a saída do campo para o Angular validar
+    js_fill = """
+        arguments[0].focus();
+        arguments[0].value = arguments[1];
+        arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+        arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+        arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
+    """
     driver.execute_script(js_fill, user_input, LOGIN)
+    time.sleep(1)
     driver.execute_script(js_fill, pass_input, SENHA)
     
     time.sleep(2)
@@ -138,7 +142,6 @@ try:
     driver.execute_script("arguments[0].click();", botao_entrar)
     
     print("Aguardando login e redirecionamento...")
-    # Aguarda sair da tela de autenticação
     try:
         wait.until(lambda d: "autenticacao" not in d.current_url)
     except:
@@ -173,9 +176,7 @@ try:
 
 except Exception as e:
     print(f"❌ Erro crítico detectado: {e}")
-    # Salva foto da tela para debug no GitHub Artifacts
     driver.save_screenshot("debug_error.png")
-    # Levanta o erro para o GitHub Actions marcar como falha
     exit(1)
 
 finally:
