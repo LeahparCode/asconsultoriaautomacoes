@@ -23,9 +23,20 @@ def upload_to_drive(file_path, file_name):
         info = json.loads(GOOGLE_JSON)
         creds = service_account.Credentials.from_service_account_info(info)
         service = build('drive', 'v3', credentials=creds)
-        file_metadata = {'name': file_name, 'parents': [ID_PASTA_DRIVE]}
+        
+        file_metadata = {
+            'name': file_name, 
+            'parents': [ID_PASTA_DRIVE]
+        }
         media = MediaFileUpload(file_path, resumable=True)
-        service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        
+        # O segredo para evitar erro de cota em Contas de Serviço é não pedir campos extras de retorno
+        service.files().create(
+            body=file_metadata, 
+            media_body=media, 
+            fields='id',
+            supportsAllDrives=True # Suporte para pastas compartilhadas
+        ).execute()
         return True
     except Exception as e:
         print(f"Erro no upload: {e}")
@@ -33,21 +44,23 @@ def upload_to_drive(file_path, file_name):
 
 def extrair(driver, wait, pasta_download, nome_unidade):
     print(f"Iniciando extração para {nome_unidade}...")
-    # Aguarda o dashboard estar clicável
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//span[text()='Dashboard']/parent::div"))).click()
+    # Clique no Dashboard via JS para evitar interceptação
+    dash = wait.until(EC.presence_of_element_located((By.XPATH, "//span[text()='Dashboard']/parent::div")))
+    driver.execute_script("arguments[0].click();", dash)
     
-    # Aguarda o botão de detalhes
-    wait.until(EC.element_to_be_clickable((By.ID, "detalhesModalClientesInadimplentes"))).click()
+    detalhes = wait.until(EC.presence_of_element_located((By.ID, "detalhesModalClientesInadimplentes")))
+    driver.execute_script("arguments[0].click();", detalhes)
     
-    # Aguarda o ícone de exportação
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//mat-icon[contains(text(), 'get_app')]"))).click()
+    export = wait.until(EC.presence_of_element_located((By.XPATH, "//mat-icon[contains(text(), 'get_app')]")))
+    driver.execute_script("arguments[0].click();", export)
     
-    # Botão confirmar exportação
-    wait.until(EC.element_to_be_clickable((By.ID, "confirmaModalCommon"))).click()
+    confirm = wait.until(EC.presence_of_element_located((By.ID, "confirmaModalCommon")))
+    driver.execute_script("arguments[0].click();", confirm)
     
     print("Aguardando download...")
-    time.sleep(20) # Tempo extra para segurança na nuvem
+    time.sleep(20) 
     
+    baixou = False
     for arq in os.listdir(pasta_download):
         if not arq.endswith(('.crdownload', '.tmp')):
             data = datetime.now().strftime("%d-%m-%Y")
@@ -56,9 +69,13 @@ def extrair(driver, wait, pasta_download, nome_unidade):
             caminho_total = os.path.join(pasta_download, arq)
             if upload_to_drive(caminho_total, novo_nome):
                 print(f"✅ Sucesso: {novo_nome}")
+                baixou = True
             os.remove(caminho_total)
     
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//mat-icon[text()='close']"))).click()
+    if not baixou: print("⚠️ Nenhum arquivo encontrado para upload.")
+    
+    close_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//mat-icon[text()='close']")))
+    driver.execute_script("arguments[0].click();", close_btn)
 
 # Configurações do Chrome
 chrome_options = Options()
@@ -73,16 +90,14 @@ os.makedirs(temp_dir, exist_ok=True)
 chrome_options.add_experimental_option("prefs", {"download.default_directory": temp_dir})
 
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-wait = WebDriverWait(driver, 30) # Aumentado para 30 segundos
+wait = WebDriverWait(driver, 30)
 
 try:
     print("Acessando o site...")
     driver.get("https://evo5.w12app.com.br/#/acesso/allpfit/autenticacao")
     
-    # Espera explícita com seletor robusto para o login
-    print("Aguardando campo de login...")
-    user_input = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "input#usuario, input[name='usuario']")))
-    pass_input = driver.find_element(By.CSS_SELECTOR, "input#senha, input[name='senha']")
+    user_input = wait.until(EC.visibility_of_element_located((By.ID, "usuario")))
+    pass_input = driver.find_element(By.ID, "senha")
     
     print("Preenchendo credenciais...")
     driver.execute_script(f"arguments[0].value='{LOGIN}'; arguments[0].dispatchEvent(new Event('input', {{ bubbles: true }}));", user_input)
@@ -97,20 +112,23 @@ try:
     extrair(driver, wait, temp_dir, "Salvador")
     
     print("Trocando de unidade...")
-    wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "novo-user-data"))).click()
-    time.sleep(2)
-    wait.until(EC.element_to_be_clickable((By.TAG_NAME, "mat-select"))).click()
-    time.sleep(2)
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//mat-option[.//div[contains(text(), 'Salvador Pernambues')]]"))).click()
+    user_menu = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "novo-user-data")))
+    driver.execute_script("arguments[0].click();", user_menu)
+    
+    time.sleep(3)
+    # Clique forçado no mat-select para ignorar sobreposição
+    select = wait.until(EC.presence_of_element_located((By.TAG_NAME, "mat-select")))
+    driver.execute_script("arguments[0].click();", select)
+    
+    time.sleep(3)
+    opcao = wait.until(EC.presence_of_element_located((By.XPATH, "//mat-option[.//div[contains(text(), 'Salvador Pernambues')]]")))
+    driver.execute_script("arguments[0].click();", opcao)
     
     time.sleep(10)
     extrair(driver, wait, temp_dir, "Pernambues")
-    print("Processo finalizado com sucesso!")
+    print("🚀 Processo finalizado com sucesso!")
 
 except Exception as e:
     print(f"❌ Ocorreu um erro: {e}")
-    # Tira um print da tela para ajudar no diagnóstico se der erro de novo
-    driver.save_screenshot("erro_screenshot.png")
-
 finally:
     driver.quit()
