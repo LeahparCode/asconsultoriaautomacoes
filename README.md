@@ -30,12 +30,17 @@ Os scripts originais foram feitos para rodar no seu computador (Windows, com Goo
 3. Vá em "APIs e serviços" → "Credenciais" → "Criar credenciais" → **Conta de serviço**. Dê um nome (ex: `automacoes-drive`) e finalize.
 4. Abra a conta de serviço criada → aba "Chaves" → "Adicionar chave" → **Criar nova chave** → tipo **JSON**. Um arquivo `.json` será baixado — guarde-o, ele será colado inteiro num Secret do GitHub (passo 2).
 5. Copie o **e-mail da conta de serviço** (algo como `automacoes-drive@SEU-PROJETO.iam.gserviceaccount.com`).
-6. **As 3 pastas de destino (Relatórios EVO, Relatorios PBI, Agendamentos) precisam estar dentro de uma Drive Compartilhada (Shared Drive), não no "Meu Drive" de uma pessoa.** Isso já foi confirmado na prática: contas de serviço não têm cota de armazenamento própria fora de Drives Compartilhadas, e tentar enviar arquivo pra uma pasta comum (mesmo compartilhada como Editor) falha com `storageQuotaExceeded`. Requer Google Workspace (não funciona em Gmail pessoal/gratuito):
-   - No Google Drive, crie uma **Drive Compartilhada** (menu lateral → "Drives compartilhados" → "Novo").
-   - Mova (ou recrie) as pastas de destino para dentro dela.
-   - Adicione o e-mail da conta de serviço como **membro da Drive Compartilhada** (não só da pasta), com papel de **Gerenciador de conteúdo** ou superior.
-7. Pegue o **ID da pasta** de cada uma: abra a pasta no navegador e copie o trecho final da URL, depois de `folders/`.
+6. **Contas de serviço não têm cota de armazenamento própria** — confirmado na prática: tentar enviar arquivo pra uma pasta comum do "Meu Drive" (mesmo compartilhada como Editor) falha com `storageQuotaExceeded`. Escolhemos resolver mantendo as pastas onde já estão, usando **Delegação em todo o domínio** (Domain-wide Delegation) — a conta de serviço passa a agir "como se fosse" um usuário real do Workspace, usando a cota dele:
+   - No Cloud Console, abra a conta de serviço → **Detalhes avançados** → ative **"Ativar a Delegação em todo o domínio Google Workspace"** (se ainda não estiver) → anote o **ID do cliente** (um número, diferente do e-mail).
+   - No [Admin Console do Workspace](https://admin.google.com/) (precisa ser administrador): **Segurança → Controles de acesso e dados → Controles de API → Delegação em todo o domínio** → **Adicionar novo**.
+     - **ID do cliente**: o número que você anotou.
+     - **Escopos OAuth**: `https://www.googleapis.com/auth/drive`
+     - Autorizar.
+   - Isso dá à conta de serviço acesso a **todo o Drive** do usuário que ela passar a representar — escolha um usuário cuja conta já tenha acesso natural às pastas de destino (idealmente uma conta de uso interno/operacional, não a conta pessoal principal de alguém).
+7. Pegue o **ID de cada pasta de destino** (Relatórios EVO, Relatorios PBI, Agendamentos), sem precisar mover nada: abra a pasta no navegador e copie o trecho final da URL, depois de `folders/`.
    `https://drive.google.com/drive/folders/1AbCdEfGhIjKlmNoPQRstuVWxyz` → o ID é `1AbCdEfGhIjKlmNoPQRstuVWxyz`.
+
+   > Alternativa mais simples de configurar (mas exige mover as pastas): criar uma **Drive Compartilhada** e adicionar a conta de serviço como membro dela. O código já suporta os dois jeitos — se `GDRIVE_IMPERSONATE_USER` (próximo passo) não for definido, ele tenta a conta de serviço diretamente, o que só funciona em Drives Compartilhadas.
 
 ### 2. Cadastrar os Secrets no GitHub
 
@@ -55,6 +60,7 @@ No repositório: **Settings → Secrets and variables → Actions → New reposi
 | `GDRIVE_FOLDER_EVO_ID` | EVO Inadimplentes | ID da pasta "Relatórios EVO" no Drive |
 | `GDRIVE_FOLDER_PBI_ID` | PBI Export | ID da pasta "Relatorios PBI" no Drive |
 | `GDRIVE_FOLDER_TABLEAU_ID` | Tableau Agendamentos | ID da pasta "Agendamentos" no Drive |
+| `GDRIVE_IMPERSONATE_USER` | EVO, PBI Export, Tableau | e-mail do usuário Workspace que a conta de serviço vai representar (Delegação em todo o domínio) |
 
 Todas as senhas acima estavam em texto puro nos scripts originais — foram trocadas por essa variável de ambiente e **não existem mais em nenhum arquivo do repositório**.
 
