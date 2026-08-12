@@ -190,10 +190,16 @@ class BrowserFactory:
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
             "safebrowsing.enabled": True,
+            # Sem isso, o runner (locale en-US) faz o Power BI renderizar toda
+            # a interface em inglês, e os seletores por texto/data-testid do
+            # script — escritos em português — deixam de bater.
+            "intl.accept_languages": "pt-BR,pt",
         }
         opts.add_experimental_option("prefs", prefs)
         opts.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         opts.add_experimental_option("useAutomationExtension", False)
+        opts.add_argument("--lang=pt-BR")
+        opts.add_argument("--accept-lang=pt-BR,pt")
         opts.add_argument("--disable-blink-features=AutomationControlled")
         opts.add_argument("--log-level=3")
         opts.add_argument("--silent")
@@ -390,13 +396,18 @@ class PowerBIBot:
                 export_item = WebDriverWait(self.driver, 8).until(
                     EC.element_to_be_clickable((
                         By.XPATH,
-                        "//div[contains(@class,'pbi-menu-item-text-container')]//span[text()='Exportar dados']"
+                        "//div[contains(@class,'pbi-menu-item-text-container')]"
+                        "//span[text()='Exportar dados' or text()='Export data']"
                     ))
                 )
                 WebUtils.js_click(self.driver, export_item)
             except TimeoutException:
                 export_item = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='pbimenu-item.Exportar dados']"))
+                    EC.element_to_be_clickable((
+                        By.CSS_SELECTOR,
+                        "button[data-testid='pbimenu-item.Exportar dados'],"
+                        " button[data-testid='pbimenu-item.Export data']",
+                    ))
                 )
                 WebUtils.js_click(self.driver, export_item)
 
@@ -411,7 +422,7 @@ class PowerBIBot:
                 WebUtils.js_click(self.driver, export_btn)
             except TimeoutException:
                 export_btn = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(.)='Exportar' or contains(@aria-label,'Exportar')]"))
+                    EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(.)='Exportar' or normalize-space(.)='Export' or contains(@aria-label,'Exportar') or contains(@aria-label,'Export')]"))
                 )
                 WebUtils.js_click(self.driver, export_btn)
 
@@ -422,14 +433,24 @@ class PowerBIBot:
             if not self._open_more_menu(visual):
                 raise RuntimeError(f"Não consegui abrir o menu 'Mais opções' da tabela para {base_name}.")
 
-            export_item = WebDriverWait(self.driver, 8).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='pbimenu-item.Exportar dados']")))
+            try:
+                export_item = WebDriverWait(self.driver, 8).until(EC.element_to_be_clickable((
+                    By.CSS_SELECTOR,
+                    "button[data-testid='pbimenu-item.Exportar dados'],"
+                    " button[data-testid='pbimenu-item.Export data']",
+                )))
+            except TimeoutException:
+                export_item = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((
+                    By.XPATH,
+                    "//*[normalize-space(text())='Exportar dados' or normalize-space(text())='Export data']",
+                )))
             WebUtils.js_click(self.driver, export_item)
             click_ts = time.time()
 
             try:
                 export_btn = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='export-btn']")))
             except TimeoutException:
-                export_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(.)='Exportar' or contains(@aria-label,'Exportar')]")))
+                export_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(.)='Exportar' or normalize-space(.)='Export' or contains(@aria-label,'Exportar') or contains(@aria-label,'Export')]")))
 
             WebUtils.js_click(self.driver, export_btn)
 
@@ -656,7 +677,7 @@ class PowerBIBot:
                 print("✅ vcMenuBtn clicado (DOM traversal).")
                 time.sleep(0.5)
                 WebDriverWait(self.driver, 6).until(
-                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'Exportar dados')]"))
+                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'Exportar dados') or contains(text(),'Export data')]"))
                 )
                 return True
             except Exception as e:
@@ -674,7 +695,7 @@ class PowerBIBot:
                 print(f"✅ vcMenuBtn clicado via fallback Python #{attempt}.")
                 time.sleep(0.5)
                 WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'Exportar dados')]"))
+                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'Exportar dados') or contains(text(),'Export data')]"))
                 )
                 return True
             except Exception:
