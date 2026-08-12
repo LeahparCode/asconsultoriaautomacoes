@@ -56,13 +56,15 @@ GDRIVE_FOLDER_ID = os.environ.get("GDRIVE_FOLDER_PBI_ID")
 
 # NOTA: a versão original convertia xlsx -> csv abrindo o Excel de verdade
 # (win32com), que salvava em ";" (ponto e vírgula) por causa do separador de
-# lista regional do Windows em pt-BR. Aqui a conversão é feita sem depender
-# do Excel, mas MANTIVE ";" como delimitador para reproduzir o mesmo formato
-# que o RedeService já espera. Se a importação no RedeService der erro de
-# layout, o primeiro lugar a conferir é este delimitador (e o encoding logo
-# abaixo).
+# lista regional do Windows em pt-BR, e em cp1252 (ANSI/Windows-1252), que é
+# o encoding padrão do "Salvar como CSV" do Excel em pt-BR — NÃO utf-8-sig.
+# O backend do RedeService (sp_importacao_formata_campos_CARTAO_TODOS) espera
+# esse encoding de largura fixa por byte; utf-8-sig já causou rejeição da
+# importação de Inadimplência com "Invalid length parameter passed to the
+# LEFT or SUBSTRING function" (multi-byte de acentos + BOM descasam o
+# LEFT/SUBSTRING por posição fixa no SQL).
 CSV_DELIMITER = ";"
-CSV_ENCODING = "utf-8-sig"
+CSV_ENCODING = "cp1252"
 
 RS_URL_IMPORT = "https://cobranca01.redeservice.com.br/cobranca.be.cartaotodos/Home/Login"
 RS_LOGIN = os.environ.get("RS_LOGIN")
