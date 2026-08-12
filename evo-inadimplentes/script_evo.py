@@ -32,7 +32,7 @@ except Exception:
     pass
 
 # ================= CONFIGURAÇÕES =================
-URL_DO_SITE = "https://evo5.w12app.com.br/#/acesso/allpfit/autenticacao"
+URL_DO_SITE = "https://evo-abc-sec.w12app.com.br/#/acesso/allpfit/autenticacao"
 LOGIN = os.environ.get("EVO_LOGIN")
 SENHA = os.environ.get("EVO_SENHA")
 HEADLESS_MODE = os.environ.get("EVO_HEADLESS", "true").lower() != "false"
