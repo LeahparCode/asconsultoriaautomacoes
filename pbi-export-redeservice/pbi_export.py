@@ -761,6 +761,23 @@ class RedeServiceBot:
         print("⚠️ Não consegui abrir a Importação pelo menu; navegando direto pela URL...")
         self.driver.get(self.URL_IMPORTACAO)
         self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
+        # Navegação direta pula o roteamento da SPA: o botão já aparece no DOM,
+        # mas o binding de eventos do Angular pode levar um instante a mais
+        # pra terminar. Sem essa pausa, o clique em "Novo" às vezes não abre
+        # o formulário (mesmo com o botão "clicável").
+        time.sleep(3)
+
+    def _abrir_modal_novo(self):
+        """Clica em 'Novo' e espera o formulário abrir; tenta de novo uma vez se não abrir."""
+        for tentativa in range(2):
+            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
+            try:
+                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))
+                return
+            except TimeoutException:
+                if tentativa == 0:
+                    print("⚠️ Formulário de importação não abriu após clicar em 'Novo'; tentando de novo...")
+        raise TimeoutException("Formulário de importação (ddlTipoImportacao) não abriu após 2 tentativas.")
 
     def _upload_dropzone(self, caminho_csv: Path):
         self.driver.execute_script("""
@@ -776,7 +793,7 @@ class RedeServiceBot:
         if not is_first:
             self.abrir_pagina_importacao()
 
-        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
+        self._abrir_modal_novo()
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlcliente")))).select_by_value("000003")
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddllayout")))).select_by_value(layout_value)
