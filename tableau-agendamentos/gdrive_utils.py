@@ -5,10 +5,19 @@ O upload é "best-effort": se a credencial não estiver configurada ou o upload
 falhar por qualquer motivo, apenas um aviso é impresso e o script principal
 continua rodando (o arquivo já está salvo localmente e também sobe como
 artefato do GitHub Actions).
+
+Suporta Delegação em todo o domínio (Domain-wide Delegation): se a variável
+GDRIVE_IMPERSONATE_USER estiver definida, a conta de serviço passa a agir
+"como se fosse" esse usuário real do Google Workspace — o upload conta na
+cota de armazenamento dele, e ele pode gravar direto em pastas comuns do
+Meu Drive (não precisa ser uma Drive Compartilhada). Requer que um admin do
+Workspace autorize a conta de serviço no Admin Console (veja o README).
 """
 
 import json
 import os
+
+GDRIVE_IMPERSONATE_USER = os.environ.get("GDRIVE_IMPERSONATE_USER")
 
 
 def _get_service():
@@ -24,6 +33,8 @@ def _get_service():
     credentials = service_account.Credentials.from_service_account_info(
         info, scopes=["https://www.googleapis.com/auth/drive"]
     )
+    if GDRIVE_IMPERSONATE_USER:
+        credentials = credentials.with_subject(GDRIVE_IMPERSONATE_USER)
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
 

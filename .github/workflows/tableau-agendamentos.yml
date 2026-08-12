@@ -36,6 +36,7 @@ jobs:
           TABLEAU_SENHA: ${{ secrets.TABLEAU_SENHA }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
           GDRIVE_FOLDER_TABLEAU_ID: ${{ secrets.GDRIVE_FOLDER_TABLEAU_ID }}
+          GDRIVE_IMPERSONATE_USER: ${{ secrets.GDRIVE_IMPERSONATE_USER }}
         run: |
           MAX_TENTATIVAS=3
           ESPERA_ERRO=60
