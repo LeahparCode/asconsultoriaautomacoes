@@ -727,6 +727,9 @@ class RedeServiceBot:
         self.abrir_pagina_importacao(via_menu=True)
         print("✅ Logado e na página de Importação.")
 
+    def _esta_na_tela_login(self) -> bool:
+        return bool(self.driver.find_elements(By.ID, "Login")) and bool(self.driver.find_elements(By.ID, "PasswordTextBox"))
+
     def abrir_pagina_importacao(self, via_menu: bool = False):
         """
         Abre a página de Importação.
@@ -770,13 +773,18 @@ class RedeServiceBot:
     def _abrir_modal_novo(self):
         """Clica em 'Novo' e espera o formulário abrir; tenta de novo uma vez se não abrir."""
         for tentativa in range(2):
+            if self._esta_na_tela_login():
+                print("⚠️ A sessão caiu de volta para a tela de login do RedeService; refazendo login...")
+                self.login_and_navigate()
+
             WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
             try:
                 WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))
                 return
             except TimeoutException:
                 if tentativa == 0:
-                    print("⚠️ Formulário de importação não abriu após clicar em 'Novo'; tentando de novo...")
+                    motivo = "a sessão caiu para a tela de login" if self._esta_na_tela_login() else "motivo desconhecido"
+                    print(f"⚠️ Formulário de importação não abriu após clicar em 'Novo' ({motivo}); tentando de novo...")
         raise TimeoutException("Formulário de importação (ddlTipoImportacao) não abriu após 2 tentativas.")
 
     def _upload_dropzone(self, caminho_csv: Path):
