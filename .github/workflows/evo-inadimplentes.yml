@@ -1,0 +1,70 @@
+name: EVO AllpFit - Inadimplentes
+
+on:
+  schedule:
+    # Baseado no ControladorEVO.py: 07:00 (Brasília, UTC-3), todos os dias.
+    # Cron do GitHub Actions é sempre em UTC -> 07:00 BRT = 10:00 UTC.
+    - cron: "0 10 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  evo-inadimplentes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evo-inadimplentes
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chrome
+
+      - name: Rodar automação (com retentativas, igual ao ControladorEVO.py)
+        env:
+          EVO_LOGIN: ${{ secrets.EVO_LOGIN }}
+          EVO_SENHA: ${{ secrets.EVO_SENHA }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          GDRIVE_FOLDER_EVO_ID: ${{ secrets.GDRIVE_FOLDER_EVO_ID }}
+        run: |
+          MAX_TENTATIVAS=5
+          ESPERA_ERRO=300
+          tentativa=1
+          while [ "$tentativa" -le "$MAX_TENTATIVAS" ]; do
+            echo "Tentativa $tentativa de $MAX_TENTATIVAS..."
+            if python script_evo.py; then
+              echo "Execução concluída com sucesso."
+              exit 0
+            fi
+            echo "Falhou na tentativa $tentativa."
+            if [ "$tentativa" -lt "$MAX_TENTATIVAS" ]; then
+              echo "Aguardando ${ESPERA_ERRO}s antes da próxima tentativa..."
+              sleep "$ESPERA_ERRO"
+            fi
+            tentativa=$((tentativa + 1))
+          done
+          echo "Todas as tentativas falharam."
+          exit 1
+
+      - name: Upload de screenshots em caso de erro
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: erro-evo-inadimplentes
+          path: evo-inadimplentes/erro_evo_*.png
+          if-no-files-found: ignore
+
+      - name: Upload dos relatórios gerados (backup)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorios-evo
+          path: evo-inadimplentes/downloads/**
+          if-no-files-found: ignore

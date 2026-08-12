@@ -1,0 +1,60 @@
+name: Gerar Perfil - RedeService
+
+on:
+  schedule:
+    # Baseado no ControladorGerarPerfil.py: 08:30 (Brasília, UTC-3), segunda a sexta.
+    # Cron do GitHub Actions é sempre em UTC -> 08:30 BRT = 11:30 UTC.
+    - cron: "30 11 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  gerar-perfil:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gerar-perfil-redeservice
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Rodar automação (com retentativas, igual ao ControladorGerarPerfil.py)
+        env:
+          RS_LOGIN: ${{ secrets.RS_LOGIN }}
+          RS_SENHA: ${{ secrets.RS_SENHA }}
+        run: |
+          MAX_TENTATIVAS=3
+          ESPERA_ERRO=300
+          tentativa=1
+          while [ "$tentativa" -le "$MAX_TENTATIVAS" ]; do
+            echo "Tentativa $tentativa de $MAX_TENTATIVAS..."
+            if python gerar_perfil.py; then
+              echo "Execução concluída com sucesso."
+              exit 0
+            fi
+            echo "Falhou na tentativa $tentativa."
+            if [ "$tentativa" -lt "$MAX_TENTATIVAS" ]; then
+              echo "Aguardando ${ESPERA_ERRO}s antes da próxima tentativa..."
+              sleep "$ESPERA_ERRO"
+            fi
+            tentativa=$((tentativa + 1))
+          done
+          echo "Todas as tentativas falharam."
+          exit 1
+
+      - name: Upload de screenshot em caso de erro
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: erro-gerar-perfil
+          path: gerar-perfil-redeservice/erro_geracao_perfil.png
+          if-no-files-found: ignore

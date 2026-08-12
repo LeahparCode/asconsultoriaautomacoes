@@ -1,0 +1,67 @@
+name: Power BI Export + Importacao RedeService
+
+on:
+  schedule:
+    # Baseado no ControladorPBI.py: 07:40 (Brasília, UTC-3), todos os dias.
+    # Cron do GitHub Actions é sempre em UTC -> 07:40 BRT = 10:40 UTC.
+    - cron: "40 10 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  pbi-export:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pbi-export-redeservice
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar Google Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar automação (com retentativas, igual ao ControladorPBI.py)
+        env:
+          PBI_LOGIN_EMAIL: ${{ secrets.PBI_LOGIN_EMAIL }}
+          PBI_SENHA: ${{ secrets.PBI_SENHA }}
+          RS_LOGIN: ${{ secrets.RS_LOGIN }}
+          RS_SENHA: ${{ secrets.RS_SENHA }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          GDRIVE_FOLDER_PBI_ID: ${{ secrets.GDRIVE_FOLDER_PBI_ID }}
+        run: |
+          MAX_TENTATIVAS=3
+          ESPERA_ERRO=300
+          tentativa=1
+          while [ "$tentativa" -le "$MAX_TENTATIVAS" ]; do
+            echo "Tentativa $tentativa de $MAX_TENTATIVAS..."
+            if python pbi_export.py; then
+              echo "Execução concluída com sucesso."
+              exit 0
+            fi
+            echo "Falhou na tentativa $tentativa."
+            if [ "$tentativa" -lt "$MAX_TENTATIVAS" ]; then
+              echo "Aguardando ${ESPERA_ERRO}s antes da próxima tentativa..."
+              sleep "$ESPERA_ERRO"
+            fi
+            tentativa=$((tentativa + 1))
+          done
+          echo "Todas as tentativas falharam."
+          exit 1
+
+      - name: Upload de artefatos (planilhas geradas)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pbi-export-output
+          path: pbi-export-redeservice/downloads/**
+          if-no-files-found: ignore
