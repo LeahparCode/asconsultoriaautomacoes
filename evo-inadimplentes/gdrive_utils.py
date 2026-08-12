@@ -1,38 +1,61 @@
 """
-Utilitário de upload para o Google Drive via Conta de Serviço (Service Account).
+Utilitário de upload para o Google Drive.
 
 O upload é "best-effort": se a credencial não estiver configurada ou o upload
 falhar por qualquer motivo, apenas um aviso é impresso e o script principal
 continua rodando (o arquivo já está salvo localmente e também sobe como
 artefato do GitHub Actions).
 
-Suporta Delegação em todo o domínio (Domain-wide Delegation): se a variável
-GDRIVE_IMPERSONATE_USER estiver definida, a conta de serviço passa a agir
-"como se fosse" esse usuário real do Google Workspace — o upload conta na
-cota de armazenamento dele, e ele pode gravar direto em pastas comuns do
-Meu Drive (não precisa ser uma Drive Compartilhada). Requer que um admin do
-Workspace autorize a conta de serviço no Admin Console (veja o README).
+Três formas de autenticar, tentadas nesta ordem:
+
+1. OAuth como usuário real (GDRIVE_OAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN) —
+   a automação age como se fosse você mesmo, usando sua própria cota. Não
+   exige Google Workspace nem conta de serviço. Veja
+   scripts/gerar_refresh_token_drive.py para gerar o refresh token.
+2. Conta de serviço com Delegação em todo o domínio (GDRIVE_IMPERSONATE_USER)
+   — a conta de serviço age como um usuário Workspace real. Exige que um
+   admin do Workspace autorize no Admin Console.
+3. Conta de serviço "pura" — só funciona se a pasta de destino estiver
+   dentro de uma Drive Compartilhada (Shared Drive), já que contas de
+   serviço não têm cota de armazenamento própria no Meu Drive de ninguém.
 """
 
 import json
 import os
 
+GDRIVE_OAUTH_CLIENT_ID = os.environ.get("GDRIVE_OAUTH_CLIENT_ID")
+GDRIVE_OAUTH_CLIENT_SECRET = os.environ.get("GDRIVE_OAUTH_CLIENT_SECRET")
+GDRIVE_OAUTH_REFRESH_TOKEN = os.environ.get("GDRIVE_OAUTH_REFRESH_TOKEN")
 GDRIVE_IMPERSONATE_USER = os.environ.get("GDRIVE_IMPERSONATE_USER")
+
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
 def _get_service():
+    from googleapiclient.discovery import build
+
+    if GDRIVE_OAUTH_REFRESH_TOKEN and GDRIVE_OAUTH_CLIENT_ID and GDRIVE_OAUTH_CLIENT_SECRET:
+        from google.oauth2.credentials import Credentials
+
+        credentials = Credentials(
+            token=None,
+            refresh_token=GDRIVE_OAUTH_REFRESH_TOKEN,
+            client_id=GDRIVE_OAUTH_CLIENT_ID,
+            client_secret=GDRIVE_OAUTH_CLIENT_SECRET,
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=SCOPES,
+        )
+        return build("drive", "v3", credentials=credentials, cache_discovery=False)
+
     creds_json = os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON")
     if not creds_json:
-        print("Aviso: GDRIVE_SERVICE_ACCOUNT_JSON não configurado — pulando upload para o Drive.")
+        print("Aviso: nenhuma credencial do Google Drive configurada — pulando upload.")
         return None
 
     from google.oauth2 import service_account
-    from googleapiclient.discovery import build
 
     info = json.loads(creds_json)
-    credentials = service_account.Credentials.from_service_account_info(
-        info, scopes=["https://www.googleapis.com/auth/drive"]
-    )
+    credentials = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     if GDRIVE_IMPERSONATE_USER:
         credentials = credentials.with_subject(GDRIVE_IMPERSONATE_USER)
     return build("drive", "v3", credentials=credentials, cache_discovery=False)

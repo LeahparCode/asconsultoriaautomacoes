@@ -23,24 +23,31 @@ Os scripts originais foram feitos para rodar no seu computador (Windows, com Goo
 
 ## Passo a passo geral de configuração
 
-### 1. Criar a conta de serviço do Google (para o upload no Drive)
+### 1. Configurar o upload para o Google Drive
 
-1. Acesse o [Google Cloud Console](https://console.cloud.google.com/) e crie (ou use) um projeto.
-2. Ative a **Google Drive API** em "APIs e serviços" → "Biblioteca".
-3. Vá em "APIs e serviços" → "Credenciais" → "Criar credenciais" → **Conta de serviço**. Dê um nome (ex: `automacoes-drive`) e finalize.
-4. Abra a conta de serviço criada → aba "Chaves" → "Adicionar chave" → **Criar nova chave** → tipo **JSON**. Um arquivo `.json` será baixado — guarde-o, ele será colado inteiro num Secret do GitHub (passo 2).
-5. Copie o **e-mail da conta de serviço** (algo como `automacoes-drive@SEU-PROJETO.iam.gserviceaccount.com`).
-6. **Contas de serviço não têm cota de armazenamento própria** — confirmado na prática: tentar enviar arquivo pra uma pasta comum do "Meu Drive" (mesmo compartilhada como Editor) falha com `storageQuotaExceeded`. Escolhemos resolver mantendo as pastas onde já estão, usando **Delegação em todo o domínio** (Domain-wide Delegation) — a conta de serviço passa a agir "como se fosse" um usuário real do Workspace, usando a cota dele:
-   - No Cloud Console, abra a conta de serviço → **Detalhes avançados** → ative **"Ativar a Delegação em todo o domínio Google Workspace"** (se ainda não estiver) → anote o **ID do cliente** (um número, diferente do e-mail).
-   - No [Admin Console do Workspace](https://admin.google.com/) (precisa ser administrador): **Segurança → Controles de acesso e dados → Controles de API → Delegação em todo o domínio** → **Adicionar novo**.
-     - **ID do cliente**: o número que você anotou.
-     - **Escopos OAuth**: `https://www.googleapis.com/auth/drive`
-     - Autorizar.
-   - Isso dá à conta de serviço acesso a **todo o Drive** do usuário que ela passar a representar — escolha um usuário cuja conta já tenha acesso natural às pastas de destino (idealmente uma conta de uso interno/operacional, não a conta pessoal principal de alguém).
-7. Pegue o **ID de cada pasta de destino** (Relatórios EVO, Relatorios PBI, Agendamentos), sem precisar mover nada: abra a pasta no navegador e copie o trecho final da URL, depois de `folders/`.
+O código suporta 3 formas de autenticar no Drive (`evo-inadimplentes/gdrive_utils.py`, `pbi-export-redeservice/gdrive_utils.py`, `tableau-agendamentos/gdrive_utils.py` — são idênticos). Ele tenta nesta ordem: **OAuth de usuário** (se configurado) → **conta de serviço com Delegação de domínio** (se `GDRIVE_IMPERSONATE_USER` configurado) → **conta de serviço pura**. Escolha uma:
+
+#### Opção A — OAuth como você mesmo (Recomendado, não precisa de Workspace)
+
+A automação passa a agir como se fosse você mesmo (sua conta Google normal), usando sua própria cota de armazenamento — funciona com qualquer conta Google, com ou sem Workspace, sem precisar de admin nem de conta de serviço.
+
+1. No [Google Cloud Console](https://console.cloud.google.com/), crie (ou use) um projeto e ative a **Google Drive API** em "APIs e serviços" → "Biblioteca".
+2. Vá em "APIs e serviços" → "Credenciais" → "Criar credenciais" → **ID do cliente OAuth**.
+   - Se pedir pra configurar a "Tela de consentimento OAuth" primeiro: tipo **Externo**, preencha nome/e-mail, e adicione seu próprio e-mail em "Usuários de teste" (não precisa publicar o app — modo de teste já é suficiente pro seu próprio uso).
+   - Tipo de aplicativo: **Aplicativo para computador**.
+   - Anote o **Client ID** e o **Client secret** gerados.
+3. No seu computador, rode o script `scripts/gerar_refresh_token_drive.py` (instruções no topo do arquivo): ele abre o navegador, você loga com a conta que tem acesso às pastas de destino e autoriza — no final ele imprime os 3 valores prontos pra colar nos Secrets do GitHub.
+4. Pegue o **ID de cada pasta de destino** (Relatórios EVO, Relatorios PBI, Agendamentos) sem precisar mover nada: abra a pasta no navegador e copie o trecho final da URL, depois de `folders/`.
    `https://drive.google.com/drive/folders/1AbCdEfGhIjKlmNoPQRstuVWxyz` → o ID é `1AbCdEfGhIjKlmNoPQRstuVWxyz`.
 
-   > Alternativa mais simples de configurar (mas exige mover as pastas): criar uma **Drive Compartilhada** e adicionar a conta de serviço como membro dela. O código já suporta os dois jeitos — se `GDRIVE_IMPERSONATE_USER` (próximo passo) não for definido, ele tenta a conta de serviço diretamente, o que só funciona em Drives Compartilhadas.
+#### Opção B — Conta de serviço (exige Google Workspace)
+
+Contas de serviço **não têm cota de armazenamento própria** — enviar arquivo pra uma pasta comum do "Meu Drive" (mesmo compartilhada como Editor) falha com `storageQuotaExceeded`. Duas formas de contornar isso, ambas exigindo um plano Workspace completo (Business/Enterprise, não o plano Individual):
+
+- **Delegação em todo o domínio**: a conta de serviço age como um usuário Workspace real, usando a cota dele (mantém as pastas onde já estão). No Cloud Console, abra a conta de serviço → "Detalhes avançados" → ative a Delegação → anote o "ID do cliente" → no [Admin Console](https://admin.google.com/) (precisa ser admin): Segurança → Controles de acesso e dados → Controles de API → Delegação em todo o domínio → Adicionar novo (Client ID + escopo `https://www.googleapis.com/auth/drive`) → defina `GDRIVE_IMPERSONATE_USER` com o e-mail representado.
+- **Drive Compartilhada**: crie uma Drive Compartilhada, mova as pastas de destino pra dentro dela, e adicione o e-mail da conta de serviço como membro (Gerenciador de conteúdo ou superior). Não precisa de `GDRIVE_IMPERSONATE_USER`.
+
+Em ambos os casos: crie a conta de serviço em "APIs e serviços" → "Credenciais" → "Criar credenciais" → Conta de serviço → aba "Chaves" → "Criar nova chave" → JSON (esse arquivo vai inteiro no Secret `GDRIVE_SERVICE_ACCOUNT_JSON`).
 
 ### 2. Cadastrar os Secrets no GitHub
 
@@ -56,11 +63,19 @@ No repositório: **Settings → Secrets and variables → Actions → New reposi
 | `PBI_SENHA` | PBI Export | senha do Power BI |
 | `TABLEAU_EMAIL` | Tableau Agendamentos | e-mail de login do Tableau |
 | `TABLEAU_SENHA` | Tableau Agendamentos | senha do Tableau |
-| `GDRIVE_SERVICE_ACCOUNT_JSON` | EVO, PBI Export, Tableau | **conteúdo inteiro** do arquivo `.json` baixado no passo 1.4 (cole o JSON completo) |
 | `GDRIVE_FOLDER_EVO_ID` | EVO Inadimplentes | ID da pasta "Relatórios EVO" no Drive |
 | `GDRIVE_FOLDER_PBI_ID` | PBI Export | ID da pasta "Relatorios PBI" no Drive |
 | `GDRIVE_FOLDER_TABLEAU_ID` | Tableau Agendamentos | ID da pasta "Agendamentos" no Drive |
-| `GDRIVE_IMPERSONATE_USER` | EVO, PBI Export, Tableau | e-mail do usuário Workspace que a conta de serviço vai representar (Delegação em todo o domínio) |
+
+E, dependendo da opção escolhida no passo 1 pro upload no Drive:
+
+| Secret | Opção | Valor |
+|---|---|---|
+| `GDRIVE_OAUTH_CLIENT_ID` | A — OAuth de usuário | Client ID gerado no Cloud Console |
+| `GDRIVE_OAUTH_CLIENT_SECRET` | A — OAuth de usuário | Client secret gerado no Cloud Console |
+| `GDRIVE_OAUTH_REFRESH_TOKEN` | A — OAuth de usuário | Impresso por `scripts/gerar_refresh_token_drive.py` |
+| `GDRIVE_SERVICE_ACCOUNT_JSON` | B — Conta de serviço | **conteúdo inteiro** do arquivo `.json` da conta de serviço |
+| `GDRIVE_IMPERSONATE_USER` | B — Conta de serviço + Delegação de domínio | e-mail do usuário Workspace representado (deixe sem definir se for usar Drive Compartilhada) |
 
 Todas as senhas acima estavam em texto puro nos scripts originais — foram trocadas por essa variável de ambiente e **não existem mais em nenhum arquivo do repositório**.
 
