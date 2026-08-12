@@ -69,3 +69,13 @@ jobs:
           name: pbi-export-output
           path: pbi-export-redeservice/downloads/**
           if-no-files-found: ignore
+
+      - name: Upload de diagnóstico em caso de erro (screenshot + HTML da página)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pbi-export-erro-diagnostico
+          path: |
+            pbi-export-redeservice/erro_*.png
+            pbi-export-redeservice/erro_*.html
+          if-no-files-found: ignore

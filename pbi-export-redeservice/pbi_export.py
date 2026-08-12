@@ -757,6 +757,18 @@ def main():
         pbi_bot.aplicar_filtro_coluna_exata(FRANQUIAS_VENDAS)
         arquivo_vendas = pbi_bot.download_report("BASE_VENDAS", titulo="Filiados Inativos")
 
+    except Exception as e:
+        nome_print = f"erro_pbi_{datetime.now().strftime('%H%M%S')}.png"
+        print(f"\n❌ [ERRO] Falha na etapa Power BI: {e}\n")
+        try:
+            driver_pbi.save_screenshot(nome_print)
+            print(f"Screenshot salva em: {os.path.abspath(nome_print)}")
+            with open(nome_print.replace(".png", ".html"), "w", encoding="utf-8") as f:
+                f.write(driver_pbi.page_source)
+            print(f"HTML da página salvo em: {os.path.abspath(nome_print.replace('.png', '.html'))}")
+        except Exception as e2:
+            print(f"Não consegui salvar screenshot/HTML de diagnóstico: {e2}")
+        raise
     finally:
         print("Fechando navegador do PBI...")
         driver_pbi.quit()
@@ -786,6 +798,18 @@ def main():
         print("\n--- Importação 3: BASE_VENDAS ---")
         rs_bot.importar_base("82", arquivo_vendas)
 
+    except Exception as e:
+        nome_print = f"erro_rs_{datetime.now().strftime('%H%M%S')}.png"
+        print(f"\n❌ [ERRO] Falha na etapa de importação RedeService: {e}\n")
+        try:
+            driver_rs.save_screenshot(nome_print)
+            print(f"Screenshot salva em: {os.path.abspath(nome_print)}")
+            with open(nome_print.replace(".png", ".html"), "w", encoding="utf-8") as f:
+                f.write(driver_rs.page_source)
+            print(f"HTML da página salvo em: {os.path.abspath(nome_print.replace('.png', '.html'))}")
+        except Exception as e2:
+            print(f"Não consegui salvar screenshot/HTML de diagnóstico: {e2}")
+        raise
     finally:
         print("\n🏁 Todas as importações concluídas. Fechando navegador.")
         driver_rs.quit()
