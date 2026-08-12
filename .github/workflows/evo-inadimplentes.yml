@@ -1,0 +1,53 @@
+name: EVO AllpFit - Inadimplentes
+
+on:
+  schedule:
+    # TODO: horário PROVISÓRIO — 08:00 (horário de Brasília, UTC-3), todos os dias.
+    # Ajustar assim que o controlador com o horário real for confirmado.
+    # Lembrete: o cron do GitHub Actions é sempre em UTC.
+    - cron: "0 11 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  evo-inadimplentes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evo-inadimplentes
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chrome
+
+      - name: Rodar automação
+        env:
+          EVO_LOGIN: ${{ secrets.EVO_LOGIN }}
+          EVO_SENHA: ${{ secrets.EVO_SENHA }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          GDRIVE_FOLDER_EVO_ID: ${{ secrets.GDRIVE_FOLDER_EVO_ID }}
+        run: python script_evo.py
+
+      - name: Upload de screenshots em caso de erro
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: erro-evo-inadimplentes
+          path: evo-inadimplentes/erro_evo_*.png
+          if-no-files-found: ignore
+
+      - name: Upload dos relatórios gerados (backup)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorios-evo
+          path: evo-inadimplentes/downloads/**
+          if-no-files-found: ignore

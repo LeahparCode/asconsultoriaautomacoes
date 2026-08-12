@@ -1,0 +1,43 @@
+name: Gerar Perfil - RedeService
+
+on:
+  schedule:
+    # TODO: horário PROVISÓRIO — 08:00 (horário de Brasília, UTC-3) em dias úteis.
+    # Ajustar assim que o controlador com o horário real for confirmado.
+    # Lembrete: o cron do GitHub Actions é sempre em UTC.
+    - cron: "0 11 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  gerar-perfil:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gerar-perfil-redeservice
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Rodar automação
+        env:
+          RS_LOGIN: ${{ secrets.RS_LOGIN }}
+          RS_SENHA: ${{ secrets.RS_SENHA }}
+        run: python gerar_perfil.py
+
+      - name: Upload de screenshot em caso de erro
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: erro-gerar-perfil
+          path: gerar-perfil-redeservice/erro_geracao_perfil.png
+          if-no-files-found: ignore

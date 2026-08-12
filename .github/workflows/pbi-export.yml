@@ -1,0 +1,50 @@
+name: Power BI Export + Importacao RedeService
+
+on:
+  schedule:
+    # TODO: horário PROVISÓRIO — 08:00 (horário de Brasília, UTC-3) em dias úteis.
+    # Ajustar assim que o controlador com o horário real for confirmado.
+    # Lembrete: o cron do GitHub Actions é sempre em UTC.
+    - cron: "0 11 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  pbi-export:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pbi-export-redeservice
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar Google Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar automação
+        env:
+          PBI_LOGIN_EMAIL: ${{ secrets.PBI_LOGIN_EMAIL }}
+          PBI_SENHA: ${{ secrets.PBI_SENHA }}
+          RS_LOGIN: ${{ secrets.RS_LOGIN }}
+          RS_SENHA: ${{ secrets.RS_SENHA }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          GDRIVE_FOLDER_PBI_ID: ${{ secrets.GDRIVE_FOLDER_PBI_ID }}
+        run: python pbi_export.py
+
+      - name: Upload de artefatos (planilhas geradas)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pbi-export-output
+          path: pbi-export-redeservice/downloads/**
+          if-no-files-found: ignore
