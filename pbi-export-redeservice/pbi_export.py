@@ -244,7 +244,16 @@ class PowerBIBot:
         try:
             email_pbi = WebDriverWait(self.driver, 6).until(EC.element_to_be_clickable((By.ID, "email")))
             WebUtils.safe_type_fast(email_pbi, PBI_LOGIN_EMAIL)
-            WebUtils.js_click(self.driver, WebDriverWait(self.driver, 6).until(EC.element_to_be_clickable((By.XPATH, "//button[contains(.,'Enviar')]"))))
+            # O texto do botão varia com o idioma do navegador ("Enviar" em
+            # pt-BR, "Submit" em en-US) — tenta os dois, e cai para ENTER no
+            # campo se nenhum botão for encontrado a tempo (não depende de
+            # idioma nenhum).
+            try:
+                WebUtils.js_click(self.driver, WebDriverWait(self.driver, 6).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(.,'Enviar') or contains(.,'Submit')]"))
+                ))
+            except Exception:
+                email_pbi.send_keys(Keys.RETURN)
         except: pass
         try:
             WebDriverWait(self.driver, 10).until(EC.url_contains("login.microsoftonline"))
