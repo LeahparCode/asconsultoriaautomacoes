@@ -709,6 +709,10 @@ class PowerBIBot:
 # AUTOMAÇÃO: REDE SERVICE
 # ==========================================
 class RedeServiceBot:
+    # A página de Importação é alcançável direto por URL — o próprio fluxo já
+    # usa esse mesmo href para voltar entre uma base e outra.
+    URL_IMPORTACAO = "https://cobranca01.redeservice.com.br/cobranca.be.cartaotodos/Importacao"
+
     def __init__(self, driver):
         self.driver = driver
         self.wait = WebDriverWait(driver, 30)
@@ -720,9 +724,43 @@ class RedeServiceBot:
         WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
 
-        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(.)='Trabalhos']"))))
-        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//li[@id='Importação']//a"))))
+        self.abrir_pagina_importacao(via_menu=True)
         print("✅ Logado e na página de Importação.")
+
+    def abrir_pagina_importacao(self, via_menu: bool = False):
+        """
+        Abre a página de Importação.
+
+        A navegação original (menu 'Trabalhos' -> li[@id='Importação']) depende
+        de um id com acento e de o submenu estar expandido/clicável — foi
+        exatamente onde a automação parava no runner. Aqui tentamos, em ordem:
+        o link direto pelo href, o item do menu, e por fim a URL direta.
+        """
+        if via_menu:
+            try:
+                WebUtils.js_click(self.driver, self.wait.until(
+                    EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(.)='Trabalhos']"))
+                ))
+            except Exception:
+                print("⚠️ Menu 'Trabalhos' não respondeu; seguindo para os outros caminhos...")
+
+        seletores = [
+            (By.XPATH, "//a[@href='/cobranca.be.cartaotodos/Importacao']"),
+            (By.XPATH, "//li[@id='Importação']//a"),
+        ]
+        for by, sel in seletores:
+            try:
+                WebUtils.js_click(self.driver, WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((by, sel))
+                ))
+                WebDriverWait(self.driver, 15).until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
+                return
+            except Exception:
+                continue
+
+        print("⚠️ Não consegui abrir a Importação pelo menu; navegando direto pela URL...")
+        self.driver.get(self.URL_IMPORTACAO)
+        self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
 
     def _upload_dropzone(self, caminho_csv: Path):
         self.driver.execute_script("""
@@ -736,7 +774,7 @@ class RedeServiceBot:
 
     def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
         if not is_first:
-            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[@href='/cobranca.be.cartaotodos/Importacao']"))))
+            self.abrir_pagina_importacao()
 
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
