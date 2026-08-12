@@ -32,13 +32,19 @@ def find_or_create_folder(service, name, parent_id):
         f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' "
         f"and '{parent_id}' in parents and trashed = false"
     )
-    resp = service.files().list(q=query, fields="files(id, name)", spaces="drive").execute()
+    resp = service.files().list(
+        q=query,
+        fields="files(id, name)",
+        spaces="drive",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
     files = resp.get("files", [])
     if files:
         return files[0]["id"]
 
     metadata = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
-    folder = service.files().create(body=metadata, fields="id").execute()
+    folder = service.files().create(body=metadata, fields="id", supportsAllDrives=True).execute()
     return folder["id"]
 
 
@@ -61,7 +67,9 @@ def upload_file(local_path, parent_folder_id, filename=None, subfolder_name=None
 
         metadata = {"name": filename or os.path.basename(local_path), "parents": [target_parent]}
         media = MediaFileUpload(local_path, resumable=True)
-        uploaded = service.files().create(body=metadata, media_body=media, fields="id, webViewLink").execute()
+        uploaded = service.files().create(
+            body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=True
+        ).execute()
         print(f"✅ Upload para o Google Drive concluído: {uploaded.get('webViewLink', uploaded.get('id'))}")
         return uploaded
     except Exception as e:
