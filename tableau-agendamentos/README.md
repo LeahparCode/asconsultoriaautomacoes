@@ -35,4 +35,8 @@ TABLEAU_EMAIL=... TABLEAU_SENHA=... python tableau_agendamentos.py
 
 ## Workflow
 
-`.github/workflows/tableau-agendamentos.yml` — cron provisório: todo dia 1 do mês às 08:00 (Brasília). Pode ser disparado manualmente em **Actions → Tableau - Relatorio de Agendamentos → Run workflow** (nesse caso ele roda com o mês/ano atuais, já que o `workflow_dispatch` não tem campos de input configurados — se quiser rodar para um mês específico manualmente, ajuste o `run:` do workflow temporariamente ou rode localmente).
+`.github/workflows/tableau-agendamentos.yml` — roda **de hora em hora, das 08h às 18h, de segunda a sábado (Brasília)**, igual ao `Controlador.py` original: ele não faz uma extração única, e sim mantém o relatório sempre atualizado ao longo do expediente. Cada execução baixa o relatório do mês atual e sobrescreve o arquivo do dia. Em caso de falha, tenta novamente até 3 vezes com 1 minuto de espera entre tentativas.
+
+Pode ser disparado manualmente em **Actions → Tableau - Relatorio de Agendamentos → Run workflow** (nesse caso ele roda com o mês/ano atuais, já que o `workflow_dispatch` não tem campos de input configurados — se quiser rodar para um mês específico manualmente, ajuste o `run:` do workflow temporariamente ou rode localmente).
+
+> Isso equivale a ~66 execuções por semana. Se isso for mais frequente do que o necessário (por exemplo, se bastasse rodar só 1x por dia), me avise que eu reduzo a frequência no `cron`.

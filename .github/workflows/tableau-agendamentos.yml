@@ -2,10 +2,12 @@ name: Tableau - Relatorio de Agendamentos
 
 on:
   schedule:
-    # TODO: horário PROVISÓRIO — dia 1 de cada mês às 08:00 (horário de Brasília, UTC-3).
-    # Ajustar assim que o controlador com o horário real for confirmado.
-    # Lembrete: o cron do GitHub Actions é sempre em UTC.
-    - cron: "0 11 1 * *"
+    # Baseado no Controlador.py: roda de hora em hora, das 08h às 18h (Brasília,
+    # UTC-3), de segunda a sábado — mantém o relatório sempre atualizado durante
+    # o expediente, em vez de rodar uma vez só.
+    # Cron do GitHub Actions é sempre em UTC -> 08h-18h BRT = 11h-21h UTC.
+    # dia-da-semana "1-6" = segunda a sábado (0/7 seriam domingo).
+    - cron: "0 11-21 * * 1-6"
   workflow_dispatch: {}
 
 jobs:
@@ -28,13 +30,31 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      - name: Rodar automação
+      - name: Rodar automação (com retentativas, igual ao Controlador.py)
         env:
           TABLEAU_EMAIL: ${{ secrets.TABLEAU_EMAIL }}
           TABLEAU_SENHA: ${{ secrets.TABLEAU_SENHA }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
           GDRIVE_FOLDER_TABLEAU_ID: ${{ secrets.GDRIVE_FOLDER_TABLEAU_ID }}
-        run: python tableau_agendamentos.py --headless
+        run: |
+          MAX_TENTATIVAS=3
+          ESPERA_ERRO=60
+          tentativa=1
+          while [ "$tentativa" -le "$MAX_TENTATIVAS" ]; do
+            echo "Tentativa $tentativa de $MAX_TENTATIVAS..."
+            if python tableau_agendamentos.py --headless; then
+              echo "Execução concluída com sucesso."
+              exit 0
+            fi
+            echo "Falhou na tentativa $tentativa."
+            if [ "$tentativa" -lt "$MAX_TENTATIVAS" ]; then
+              echo "Aguardando ${ESPERA_ERRO}s antes da próxima tentativa..."
+              sleep "$ESPERA_ERRO"
+            fi
+            tentativa=$((tentativa + 1))
+          done
+          echo "Todas as tentativas falharam."
+          exit 1
 
       - name: Upload dos arquivos gerados / erro
         if: always()

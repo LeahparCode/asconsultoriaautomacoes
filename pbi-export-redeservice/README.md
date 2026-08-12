@@ -29,4 +29,4 @@ PBI_LOGIN_EMAIL=... PBI_SENHA=... RS_LOGIN=2 RS_SENHA=... PBI_HEADLESS=false pyt
 
 ## Workflow
 
-`.github/workflows/pbi-export.yml` — cron provisório: dias úteis às 08:00 (Brasília). Instala o Google Chrome no runner via `browser-actions/setup-chrome`. Pode ser disparado manualmente em **Actions → Power BI Export + Importacao RedeService → Run workflow**.
+`.github/workflows/pbi-export.yml` — todo dia às 07:40 (Brasília), igual ao `ControladorPBI.py` original. Em caso de falha, tenta novamente até 3 vezes com 5 minutos de espera entre tentativas. Instala o Google Chrome no runner via `browser-actions/setup-chrome`. Pode ser disparado manualmente em **Actions → Power BI Export + Importacao RedeService → Run workflow**.

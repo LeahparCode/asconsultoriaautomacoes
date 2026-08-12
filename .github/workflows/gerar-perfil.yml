@@ -2,10 +2,9 @@ name: Gerar Perfil - RedeService
 
 on:
   schedule:
-    # TODO: horário PROVISÓRIO — 08:00 (horário de Brasília, UTC-3) em dias úteis.
-    # Ajustar assim que o controlador com o horário real for confirmado.
-    # Lembrete: o cron do GitHub Actions é sempre em UTC.
-    - cron: "0 11 * * 1-5"
+    # Baseado no ControladorGerarPerfil.py: 08:30 (Brasília, UTC-3), segunda a sexta.
+    # Cron do GitHub Actions é sempre em UTC -> 08:30 BRT = 11:30 UTC.
+    - cron: "30 11 * * 1-5"
   workflow_dispatch: {}
 
 jobs:
@@ -28,11 +27,29 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      - name: Rodar automação
+      - name: Rodar automação (com retentativas, igual ao ControladorGerarPerfil.py)
         env:
           RS_LOGIN: ${{ secrets.RS_LOGIN }}
           RS_SENHA: ${{ secrets.RS_SENHA }}
-        run: python gerar_perfil.py
+        run: |
+          MAX_TENTATIVAS=3
+          ESPERA_ERRO=300
+          tentativa=1
+          while [ "$tentativa" -le "$MAX_TENTATIVAS" ]; do
+            echo "Tentativa $tentativa de $MAX_TENTATIVAS..."
+            if python gerar_perfil.py; then
+              echo "Execução concluída com sucesso."
+              exit 0
+            fi
+            echo "Falhou na tentativa $tentativa."
+            if [ "$tentativa" -lt "$MAX_TENTATIVAS" ]; then
+              echo "Aguardando ${ESPERA_ERRO}s antes da próxima tentativa..."
+              sleep "$ESPERA_ERRO"
+            fi
+            tentativa=$((tentativa + 1))
+          done
+          echo "Todas as tentativas falharam."
+          exit 1
 
       - name: Upload de screenshot em caso de erro
         if: failure()

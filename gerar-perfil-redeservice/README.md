@@ -21,6 +21,6 @@ RS_LOGIN=2 RS_SENHA=Admin@2026 python gerar_perfil.py
 
 ## Workflow
 
-`.github/workflows/gerar-perfil.yml` — cron provisório: dias úteis às 08:00 (Brasília). Pode ser disparado manualmente em **Actions → Gerar Perfil - RedeService → Run workflow**.
+`.github/workflows/gerar-perfil.yml` — segunda a sexta às 08:30 (Brasília), igual ao `ControladorGerarPerfil.py` original. Em caso de falha, tenta novamente até 3 vezes com 5 minutos de espera entre tentativas. Pode ser disparado manualmente em **Actions → Gerar Perfil - RedeService → Run workflow**.
 
 Em caso de erro, um screenshot (`erro_geracao_perfil.png`) sobe como artefato da execução.

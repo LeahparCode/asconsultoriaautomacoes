@@ -23,6 +23,6 @@ EVO_LOGIN=seu@email.com EVO_SENHA=suasenha EVO_HEADLESS=false python script_evo.
 
 ## Workflow
 
-`.github/workflows/evo-inadimplentes.yml` — cron provisório: todo dia às 08:00 (Brasília). Pode ser disparado manualmente em **Actions → EVO AllpFit - Inadimplentes → Run workflow**.
+`.github/workflows/evo-inadimplentes.yml` — todo dia às 07:00 (Brasília), igual ao `ControladorEVO.py` original. Em caso de falha, tenta novamente até 5 vezes com 5 minutos de espera entre tentativas. Pode ser disparado manualmente em **Actions → EVO AllpFit - Inadimplentes → Run workflow**.
 
 Os arquivos gerados (e screenshots de erro, se houver) sobem como artefatos de cada execução, além de irem para o Drive.

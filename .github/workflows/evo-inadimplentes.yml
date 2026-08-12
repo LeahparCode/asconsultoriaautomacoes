@@ -2,10 +2,9 @@ name: EVO AllpFit - Inadimplentes
 
 on:
   schedule:
-    # TODO: horário PROVISÓRIO — 08:00 (horário de Brasília, UTC-3), todos os dias.
-    # Ajustar assim que o controlador com o horário real for confirmado.
-    # Lembrete: o cron do GitHub Actions é sempre em UTC.
-    - cron: "0 11 * * *"
+    # Baseado no ControladorEVO.py: 07:00 (Brasília, UTC-3), todos os dias.
+    # Cron do GitHub Actions é sempre em UTC -> 07:00 BRT = 10:00 UTC.
+    - cron: "0 10 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -28,13 +27,31 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chrome
 
-      - name: Rodar automação
+      - name: Rodar automação (com retentativas, igual ao ControladorEVO.py)
         env:
           EVO_LOGIN: ${{ secrets.EVO_LOGIN }}
           EVO_SENHA: ${{ secrets.EVO_SENHA }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
           GDRIVE_FOLDER_EVO_ID: ${{ secrets.GDRIVE_FOLDER_EVO_ID }}
-        run: python script_evo.py
+        run: |
+          MAX_TENTATIVAS=5
+          ESPERA_ERRO=300
+          tentativa=1
+          while [ "$tentativa" -le "$MAX_TENTATIVAS" ]; do
+            echo "Tentativa $tentativa de $MAX_TENTATIVAS..."
+            if python script_evo.py; then
+              echo "Execução concluída com sucesso."
+              exit 0
+            fi
+            echo "Falhou na tentativa $tentativa."
+            if [ "$tentativa" -lt "$MAX_TENTATIVAS" ]; then
+              echo "Aguardando ${ESPERA_ERRO}s antes da próxima tentativa..."
+              sleep "$ESPERA_ERRO"
+            fi
+            tentativa=$((tentativa + 1))
+          done
+          echo "Todas as tentativas falharam."
+          exit 1
 
       - name: Upload de screenshots em caso de erro
         if: failure()

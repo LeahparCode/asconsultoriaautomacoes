@@ -2,14 +2,16 @@
 
 Repositório com as automações web (Playwright/Selenium) que rodam **automaticamente pelo GitHub Actions**, uma pasta por automação:
 
-| Pasta | O que faz | Sistema | Frequência (provisória) |
+| Pasta | O que faz | Sistema | Frequência (baseada nos 4 controladores enviados) |
 |---|---|---|---|
-| [`gerar-perfil-redeservice/`](gerar-perfil-redeservice) | Dispara a "Geração de Perfil" no RedeService | RedeService (Cartão de Todos) | dias úteis, 08:00 (BRT) |
-| [`evo-inadimplentes/`](evo-inadimplentes) | Extrai clientes inadimplentes (Salvador + Pernambués) | EVO / AllpFit | diário, 08:00 (BRT) |
-| [`pbi-export-redeservice/`](pbi-export-redeservice) | Exporta 3 relatórios do Power BI e reimporta no RedeService | Power BI + RedeService | dias úteis, 08:00 (BRT) |
-| [`tableau-agendamentos/`](tableau-agendamentos) | Exporta relatório de agendamentos do mês | Tableau (AmorSaúde) | mensal, dia 1, 08:00 (BRT) |
+| [`gerar-perfil-redeservice/`](gerar-perfil-redeservice) | Dispara a "Geração de Perfil" no RedeService | RedeService (Cartão de Todos) | segunda a sexta, 08:30 (BRT) |
+| [`evo-inadimplentes/`](evo-inadimplentes) | Extrai clientes inadimplentes (Salvador + Pernambués) | EVO / AllpFit | todos os dias, 07:00 (BRT) |
+| [`pbi-export-redeservice/`](pbi-export-redeservice) | Exporta 3 relatórios do Power BI e reimporta no RedeService | Power BI + RedeService | todos os dias, 07:40 (BRT) |
+| [`tableau-agendamentos/`](tableau-agendamentos) | Exporta relatório de agendamentos do mês corrente | Tableau (AmorSaúde) | **de hora em hora, 08h às 18h**, segunda a sábado (BRT) |
 
-Os horários acima estão **provisórios** — assim que você me passar o controlador com os horários reais de cada automação, eu ajusto o `cron` de cada workflow em `.github/workflows/`.
+Esses horários vieram dos 4 controladores que você me passou (`ControladorGerarPerfil.py`, `ControladorEVO.py`, `ControladorPBI.py`, `Controlador.py`) e já estão configurados nos 4 arquivos em `.github/workflows/`. Se algum horário mudar, é só me avisar.
+
+> **Atenção — Tableau roda 11x por dia.** O `Controlador.py` original não faz uma extração única por mês: ele reexecuta o script **toda hora cheia** dentro do expediente (08h-18h, seg-sáb) para manter o relatório sempre atualizado. Reproduzi esse comportamento no workflow, mas isso significa ~66 execuções de navegador por semana só dessa automação. Se sua conta do GitHub tiver um limite de minutos de Actions (planos gratuitos/Pro de repositórios privados têm cota mensal), vale ficar de olho no consumo em **Settings → Billing → Actions** nas primeiras semanas.
 
 ## O que mudou em relação aos scripts originais
 
@@ -55,15 +57,13 @@ No repositório: **Settings → Secrets and variables → Actions → New reposi
 
 Todas as senhas acima estavam em texto puro nos scripts originais — foram trocadas por essa variável de ambiente e **não existem mais em nenhum arquivo do repositório**.
 
-### 3. Ajustar o horário (cron) de cada automação
+### 3. Horário (cron) de cada automação
 
-Cada workflow em `.github/workflows/*.yml` tem uma linha `cron:` marcada com `# TODO`. O cron do GitHub Actions é **sempre em UTC**, e o horário de Brasília é UTC-3 (sem horário de verão atualmente). Fórmula rápida: `hora_UTC = hora_Brasília + 3`.
+Os 4 workflows em `.github/workflows/*.yml` já estão configurados com os horários dos controladores originais (tabela acima). O cron do GitHub Actions é **sempre em UTC**, e o horário de Brasília é UTC-3 (sem horário de verão atualmente) — por isso cada `cron:` no `.yml` tem um comentário explicando a conversão feita.
 
-Exemplo: rodar às 07:30 (Brasília) → `30 10 * * *` (10:30 UTC).
+Se algum horário mudar no futuro, é só editar a linha `cron:` do workflow correspondente. Fórmula rápida: `hora_UTC = hora_Brasília + 3`. Formato do cron: `minuto hora dia-do-mês mês dia-da-semana` (dia-da-semana: `1-5` = segunda a sexta, `1-6` = segunda a sábado, `*` = todo dia).
 
-Assim que você me mandar os horários do controlador, eu edito essas 4 linhas diretamente.
-
-Formato do cron: `minuto hora dia-do-mês mês dia-da-semana` (dia-da-semana: `1-5` = segunda a sexta, `*` = todo dia).
+Cada workflow também reproduz a **lógica de retentativa** do respectivo controlador (número de tentativas e tempo de espera entre elas) — se a execução falhar, ele tenta de novo automaticamente antes de desistir e esperar o próximo ciclo agendado.
 
 ### 4. Testar manualmente antes de confiar no agendamento
 
