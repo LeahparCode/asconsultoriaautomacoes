@@ -30,11 +30,12 @@ Os scripts originais foram feitos para rodar no seu computador (Windows, com Goo
 3. Vá em "APIs e serviços" → "Credenciais" → "Criar credenciais" → **Conta de serviço**. Dê um nome (ex: `automacoes-drive`) e finalize.
 4. Abra a conta de serviço criada → aba "Chaves" → "Adicionar chave" → **Criar nova chave** → tipo **JSON**. Um arquivo `.json` será baixado — guarde-o, ele será colado inteiro num Secret do GitHub (passo 2).
 5. Copie o **e-mail da conta de serviço** (algo como `automacoes-drive@SEU-PROJETO.iam.gserviceaccount.com`).
-6. No Google Drive, entre em cada uma das 3 pastas de destino (Relatórios EVO, Relatorios PBI, Agendamentos) e **compartilhe a pasta** com esse e-mail, dando permissão de **Editor**.
+6. **As 3 pastas de destino (Relatórios EVO, Relatorios PBI, Agendamentos) precisam estar dentro de uma Drive Compartilhada (Shared Drive), não no "Meu Drive" de uma pessoa.** Isso já foi confirmado na prática: contas de serviço não têm cota de armazenamento própria fora de Drives Compartilhadas, e tentar enviar arquivo pra uma pasta comum (mesmo compartilhada como Editor) falha com `storageQuotaExceeded`. Requer Google Workspace (não funciona em Gmail pessoal/gratuito):
+   - No Google Drive, crie uma **Drive Compartilhada** (menu lateral → "Drives compartilhados" → "Novo").
+   - Mova (ou recrie) as pastas de destino para dentro dela.
+   - Adicione o e-mail da conta de serviço como **membro da Drive Compartilhada** (não só da pasta), com papel de **Gerenciador de conteúdo** ou superior.
 7. Pegue o **ID da pasta** de cada uma: abra a pasta no navegador e copie o trecho final da URL, depois de `folders/`.
    `https://drive.google.com/drive/folders/1AbCdEfGhIjKlmNoPQRstuVWxyz` → o ID é `1AbCdEfGhIjKlmNoPQRstuVWxyz`.
-
-   ⚠️ **Atenção — limitação conhecida:** se essas pastas forem do **Google Drive pessoal (Gmail comum)**, contas de serviço podem falhar ao criar arquivos ali (elas não têm cota de armazenamento própria fora de "Drives Compartilhados" do Google Workspace). O upload foi implementado para **nunca travar a automação** se isso acontecer — ele só avisa no log e segue em frente, já que o arquivo também fica salvo como artefato do Actions. Teste um upload manualmente (rodando o workflow via `workflow_dispatch`) para confirmar se funciona no seu caso; se não funcionar, me avise que ajustamos a estratégia (ex: OAuth de usuário em vez de conta de serviço).
 
 ### 2. Cadastrar os Secrets no GitHub
 
