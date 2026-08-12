@@ -787,6 +787,20 @@ class RedeServiceBot:
                     print(f"⚠️ Formulário de importação não abriu após clicar em 'Novo' ({motivo}); tentando de novo...")
         raise TimeoutException("Formulário de importação (ddlTipoImportacao) não abriu após 2 tentativas.")
 
+    def _select_quando_disponivel(self, select_id: str, value: str, timeout: int = 15):
+        """
+        Seleciona um <option> por value, esperando ele existir antes.
+
+        Alguns selects (como o de Layout) são populados dinamicamente depois
+        que um select "pai" (Tipo de Importação/Cliente) muda — selecionar
+        direto pode disparar NoSuchElementException porque a opção ainda não
+        chegou no DOM.
+        """
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: d.find_elements(By.CSS_SELECTOR, f"#{select_id} option[value='{value}']")
+        )
+        SeleniumSelect(self.driver.find_element(By.ID, select_id)).select_by_value(value)
+
     def _upload_dropzone(self, caminho_csv: Path):
         self.driver.execute_script("""
             document.querySelectorAll('.dropzone input[type="file"], input.dz-hidden-input').forEach(function(el) {
@@ -804,7 +818,7 @@ class RedeServiceBot:
         self._abrir_modal_novo()
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlcliente")))).select_by_value("000003")
-        SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddllayout")))).select_by_value(layout_value)
+        self._select_quando_disponivel("ddllayout", layout_value)
 
         self._upload_dropzone(caminho_csv)
         print("⏳ Aguardando processamento do upload (10s)...")
