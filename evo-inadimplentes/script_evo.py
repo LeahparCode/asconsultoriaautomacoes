@@ -18,12 +18,18 @@ Requisitos:
 """
 
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 from gdrive_utils import upload_file
+
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 # ================= CONFIGURAÇÕES =================
 URL_DO_SITE = "https://evo5.w12app.com.br/#/acesso/allpfit/autenticacao"
@@ -233,6 +239,7 @@ def iniciar_automacao():
 
             if houve_falha:
                 print(f"\n⚠️  Execução concluída com pelo menos uma falha. Arquivos disponíveis foram salvos em:\n{DOWNLOAD_DIR}")
+                raise RuntimeError("Uma ou mais unidades falharam na extração — veja o resumo acima e o(s) screenshot(s) de erro.")
             else:
                 print(f"\n🚀 Sucesso absoluto! Todos os arquivos foram processados:\n{DOWNLOAD_DIR}")
 
