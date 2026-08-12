@@ -227,7 +227,9 @@ class PowerBIBot:
 
     def __init__(self, driver):
         self.driver = driver
-        self.wait = WebDriverWait(driver, 35)
+        # 60s (era 35s): em runners de nuvem sem GPU, o Power BI demora mais
+        # para renderizar visuais pesados do que numa máquina local.
+        self.wait = WebDriverWait(driver, 60)
 
     # ── Helper anti-stale: sempre busca o email_header fresco do DOM ───────
     def _fresh_email_header(self):
@@ -267,14 +269,14 @@ class PowerBIBot:
         while time.time() < end:
             self.driver.switch_to.default_content()
             if self.driver.find_elements(By.CSS_SELECTOR, "#pvExplorationHost, div.visual, div.canvas, [role='presentation']"):
-                time.sleep(2)
+                time.sleep(5)
                 return
             for f in self.driver.find_elements(By.TAG_NAME, "iframe"):
                 try:
                     self.driver.switch_to.default_content()
                     self.driver.switch_to.frame(f)
                     if self.driver.find_elements(By.CSS_SELECTOR, "#pvExplorationHost, div.visual, div.canvas, [role='presentation']"):
-                        time.sleep(2)
+                        time.sleep(5)
                         return
                 except: pass
             time.sleep(1)
