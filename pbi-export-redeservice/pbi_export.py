@@ -294,7 +294,11 @@ class PowerBIBot:
     def aplicar_filtro_coluna_exata(self, franquias):
         print("🔍 Buscando barra de pesquisa EXATA da 'Franquia'...")
         titulo_el = self.wait.until(EC.visibility_of_element_located((By.XPATH, "//*[normalize-space(text())='Franquia' or @title='Franquia']")))
-        inputs_pesquisa = self.driver.find_elements(By.XPATH, "//input[contains(@placeholder,'Pesquisar') or contains(@aria-label,'Pesquisar')]")
+        inputs_pesquisa = self.driver.find_elements(
+            By.XPATH,
+            "//input[contains(@placeholder,'Pesquisar') or contains(@aria-label,'Pesquisar')"
+            " or contains(@placeholder,'Search') or contains(@aria-label,'Search')]",
+        )
         inputs_visiveis = [inp for inp in inputs_pesquisa if inp.is_displayed()]
 
         search_input = min(inputs_visiveis, key=lambda inp: abs(inp.location['x'] - titulo_el.location['x'])) if inputs_visiveis else None
@@ -331,7 +335,7 @@ class PowerBIBot:
         self._select_popup_mult(popup, franquias)
 
         try:
-            aplicar = popup.find_element(By.XPATH, ".//button[contains(.,'Aplicar')]")
+            aplicar = popup.find_element(By.XPATH, ".//button[contains(.,'Aplicar') or contains(.,'Apply')]")
             WebUtils.js_click(self.driver, aplicar)
         except: pass
         print("Filtro de Franquia aplicado via popup.")
@@ -467,7 +471,7 @@ class PowerBIBot:
         return False
 
     def _clear_popup(self, popup):
-        for label in ("Limpar selecoes", "Limpar selecao", "Limpar", "Desmarcar tudo"):
+        for label in ("Limpar selecoes", "Limpar selecao", "Limpar", "Desmarcar tudo", "Clear selections", "Clear selection", "Clear", "Deselect all"):
             try:
                 btn = popup.find_element(By.XPATH, f".//button[contains(.,'{label}')]")
                 WebUtils.js_click(self.driver, btn); time.sleep(0.3); return True
