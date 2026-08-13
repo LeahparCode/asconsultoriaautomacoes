@@ -4,11 +4,12 @@ on:
   schedule:
     # Baseado no ControladorGerarPerfil.py: 08:30 (Brasília, UTC-3), segunda a sexta.
     # Cron do GitHub Actions é sempre em UTC -> alvo 08:30 BRT = 11:30 UTC, mas
-    # deslocado para 11:23 UTC (08:23 BRT): o GitHub enfileira execuções
-    # agendadas e atrasa mais em horários "redondos" (:00, :15, :30, :45),
-    # que concentram o maior volume de workflows do GitHub inteiro disparando
-    # ao mesmo tempo. Minutos "quebrados" como :23 sofrem menos fila/atraso.
-    - cron: "23 11 * * 1-5"
+    # deslocado para 11:19 UTC (08:19 BRT): o GitHub enfileira execuções
+    # agendadas e atrasa mais em horários "redondos" (:00, :15, :30, :45) e em
+    # múltiplos de 5 no geral, que concentram o maior volume de workflows do
+    # GitHub inteiro disparando ao mesmo tempo. Minutos "quebrados" como :19
+    # sofrem menos fila/atraso.
+    - cron: "19 11 * * 1-5"
   workflow_dispatch: {}
 
 jobs:
