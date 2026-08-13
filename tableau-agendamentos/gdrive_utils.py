@@ -61,6 +61,20 @@ def _get_service():
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
 
+def find_file(service, name, parent_id):
+    escaped = name.replace("'", "\\'")
+    query = f"name = '{escaped}' and '{parent_id}' in parents and trashed = false"
+    resp = service.files().list(
+        q=query,
+        fields="files(id, name)",
+        spaces="drive",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
+    files = resp.get("files", [])
+    return files[0]["id"] if files else None
+
+
 def find_or_create_folder(service, name, parent_id):
     query = (
         f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' "
@@ -83,7 +97,10 @@ def find_or_create_folder(service, name, parent_id):
 
 
 def upload_file(local_path, parent_folder_id, filename=None, subfolder_name=None):
-    """Envia local_path para o Drive, dentro de parent_folder_id (opcionalmente em uma subpasta)."""
+    """Envia local_path direto para dentro de parent_folder_id (sem subpasta por
+    data). Se já existir um arquivo com o mesmo nome nessa pasta, o conteúdo
+    dele é substituído (mesmo ID do arquivo) em vez de criar uma cópia nova —
+    assim, rodar de novo no mesmo dia atualiza o arquivo já baixado."""
     if not parent_folder_id:
         print("Aviso: ID da pasta do Google Drive não configurado — pulando upload.")
         return None
@@ -99,12 +116,21 @@ def upload_file(local_path, parent_folder_id, filename=None, subfolder_name=None
         if subfolder_name:
             target_parent = find_or_create_folder(service, subfolder_name, parent_folder_id)
 
-        metadata = {"name": filename or os.path.basename(local_path), "parents": [target_parent]}
+        nome = filename or os.path.basename(local_path)
         media = MediaFileUpload(local_path, resumable=True)
-        uploaded = service.files().create(
-            body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=True
-        ).execute()
-        print(f"✅ Upload para o Google Drive concluído: {uploaded.get('webViewLink', uploaded.get('id'))}")
+
+        existente_id = find_file(service, nome, target_parent)
+        if existente_id:
+            uploaded = service.files().update(
+                fileId=existente_id, media_body=media, fields="id, webViewLink", supportsAllDrives=True
+            ).execute()
+            print(f"✅ Arquivo existente substituído no Google Drive: {uploaded.get('webViewLink', uploaded.get('id'))}")
+        else:
+            metadata = {"name": nome, "parents": [target_parent]}
+            uploaded = service.files().create(
+                body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=True
+            ).execute()
+            print(f"✅ Upload para o Google Drive concluído: {uploaded.get('webViewLink', uploaded.get('id'))}")
         return uploaded
     except Exception as e:
         print(f"⚠️  Aviso: falha ao enviar '{local_path}' para o Google Drive: {e}")

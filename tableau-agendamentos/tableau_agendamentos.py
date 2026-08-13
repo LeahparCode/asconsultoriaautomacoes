@@ -198,7 +198,7 @@ def main():
 
             print(f"Arquivo salvo localmente em: {caminho_final}")
 
-            upload_file(caminho_final, GDRIVE_FOLDER_ID, filename=nome_arquivo, subfolder_name=data_hoje)
+            upload_file(caminho_final, GDRIVE_FOLDER_ID, filename=nome_arquivo)
 
         except Exception as erro:
             print(f"Ocorreu um erro: {erro}")

@@ -77,15 +77,15 @@ def extrair_dados_inadimplentes(page, nome_desejado, timeout_dados=TIMEOUT_DADOS
         page.click("#confirmaModalCommon")
     download = download_info.value
 
-    # Monta o nome final e salva na pasta local (depois enviada ao Drive)
+    # Monta o nome final e salva na pasta local (depois enviada ao Drive).
+    # Nome estável (sem data) para que, ao subir pro Drive, um arquivo já
+    # existente com o mesmo nome seja substituído em vez de duplicado.
     extensao = os.path.splitext(download.suggested_filename)[1]
-    data_atual = datetime.now().strftime("%d-%m-%Y")
-    nome_final = f"{data_atual}_{nome_desejado}{extensao}"
+    nome_final = f"{nome_desejado}{extensao}"
 
-    pasta_destino_final = DOWNLOAD_DIR / f"Inadimplentes {data_atual}"
-    pasta_destino_final.mkdir(parents=True, exist_ok=True)
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-    caminho_local = pasta_destino_final / nome_final
+    caminho_local = DOWNLOAD_DIR / nome_final
     download.save_as(str(caminho_local))
     print(f"✅ Arquivo salvo localmente em: {caminho_local}")
 
@@ -93,7 +93,6 @@ def extrair_dados_inadimplentes(page, nome_desejado, timeout_dados=TIMEOUT_DADOS
         str(caminho_local),
         GDRIVE_FOLDER_ID,
         filename=nome_final,
-        subfolder_name=f"Inadimplentes {data_atual}",
     )
 
     print("Fechando o quadro de inadimplentes...")

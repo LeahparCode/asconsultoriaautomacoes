@@ -463,8 +463,7 @@ class PowerBIBot:
 
         arquivo_baixado = FileProcessor.wait_for_download(DOWNLOAD_DIR, since_ts=click_ts)
 
-        data_hoje = datetime.now().strftime("%d-%m-%Y")
-        nome_novo = f"{base_name}_{data_hoje}{arquivo_baixado.suffix}"
+        nome_novo = f"{base_name}{arquivo_baixado.suffix}"
         caminho_novo = arquivo_baixado.parent / nome_novo
 
         if caminho_novo.exists(): caminho_novo.unlink()
@@ -886,11 +885,12 @@ def main():
         print("Fechando navegador do PBI...")
         driver_pbi.quit()
 
-    # Backup no Google Drive dos arquivos extraídos (best-effort)
-    data_hoje = datetime.now().strftime("%d-%m-%Y")
+    # Backup no Google Drive dos arquivos extraídos (best-effort). Direto na
+    # pasta de destino, sem subpasta por data — se já existir um arquivo com
+    # o mesmo nome, ele é substituído em vez de duplicado.
     for arquivo in (arquivo_csv_inadimplencia, arquivo_relacionamento, arquivo_vendas):
         if arquivo:
-            upload_file(str(arquivo), GDRIVE_FOLDER_ID, subfolder_name=data_hoje)
+            upload_file(str(arquivo), GDRIVE_FOLDER_ID)
 
     # --- ETAPA 2: IMPORTAÇÃO REDESERVICE ---
     if not (arquivo_csv_inadimplencia and arquivo_relacionamento and arquivo_vendas):
