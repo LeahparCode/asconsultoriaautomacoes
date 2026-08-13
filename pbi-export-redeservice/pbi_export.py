@@ -3,7 +3,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date
 
 import openpyxl
 from selenium import webdriver
@@ -137,6 +137,31 @@ class FileProcessor:
         raise TimeoutException("Download não finalizou dentro do tempo limite.")
 
     @staticmethod
+    def _valor_csv(valor):
+        """
+        Formata um valor de célula do jeito que o Excel em pt-BR escreveria
+        num "Salvar como CSV": data em DD/MM/AAAA e número decimal com
+        vírgula. openpyxl entrega o valor "cru" (datetime/float do Python),
+        e escrever isso direto no CSV (ex: "2026-08-13 00:00:00" em vez de
+        "13/08/2026", ou "1234.5" em vez de "1234,5") é o motivo mais
+        provável do RedeService rejeitar a importação da base de
+        Inadimplência com erro de LEFT/SUBSTRING — o backend espera datas e
+        números no formato de largura fixa do Excel brasileiro.
+        """
+        if valor is None:
+            return ""
+        if isinstance(valor, datetime):
+            if (valor.hour, valor.minute, valor.second) == (0, 0, 0):
+                return valor.strftime("%d/%m/%Y")
+            return valor.strftime("%d/%m/%Y %H:%M:%S")
+        if isinstance(valor, date):
+            return valor.strftime("%d/%m/%Y")
+        if isinstance(valor, float):
+            texto = f"{valor:.10f}".rstrip("0").rstrip(".")
+            return texto.replace(".", ",")
+        return valor
+
+    @staticmethod
     def processar_planilha_inadimplencia(caminho_xlsx: Path) -> Path:
         """
         Preenche a coluna X com 'Base_<Mês>' e converte para CSV.
@@ -175,7 +200,7 @@ class FileProcessor:
         with open(caminho_csv, "w", newline="", encoding=CSV_ENCODING) as f:
             writer = csv.writer(f, delimiter=CSV_DELIMITER)
             for row in ws.iter_rows(min_row=1, max_row=LINHA_FIM):
-                writer.writerow(["" if cell.value is None else cell.value for cell in row])
+                writer.writerow([FileProcessor._valor_csv(cell.value) for cell in row])
 
         wb.close()
         print(f"✅ CSV gerado: {caminho_csv.name}")
@@ -463,7 +488,8 @@ class PowerBIBot:
 
         arquivo_baixado = FileProcessor.wait_for_download(DOWNLOAD_DIR, since_ts=click_ts)
 
-        nome_novo = f"{base_name}{arquivo_baixado.suffix}"
+        data_hoje = datetime.now().strftime("%d-%m-%Y")
+        nome_novo = f"{base_name}_{data_hoje}{arquivo_baixado.suffix}"
         caminho_novo = arquivo_baixado.parent / nome_novo
 
         if caminho_novo.exists(): caminho_novo.unlink()
