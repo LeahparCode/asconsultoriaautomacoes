@@ -3,8 +3,12 @@ name: Gerar Perfil - RedeService
 on:
   schedule:
     # Baseado no ControladorGerarPerfil.py: 08:30 (Brasília, UTC-3), segunda a sexta.
-    # Cron do GitHub Actions é sempre em UTC -> 08:30 BRT = 11:30 UTC.
-    - cron: "30 11 * * 1-5"
+    # Cron do GitHub Actions é sempre em UTC -> alvo 08:30 BRT = 11:30 UTC, mas
+    # deslocado para 11:23 UTC (08:23 BRT): o GitHub enfileira execuções
+    # agendadas e atrasa mais em horários "redondos" (:00, :15, :30, :45),
+    # que concentram o maior volume de workflows do GitHub inteiro disparando
+    # ao mesmo tempo. Minutos "quebrados" como :23 sofrem menos fila/atraso.
+    - cron: "23 11 * * 1-5"
   workflow_dispatch: {}
 
 jobs:

@@ -7,7 +7,11 @@ on:
     # o expediente, em vez de rodar uma vez só.
     # Cron do GitHub Actions é sempre em UTC -> 08h-18h BRT = 11h-21h UTC.
     # dia-da-semana "1-6" = segunda a sábado (0/7 seriam domingo).
-    - cron: "0 11-21 * * 1-6"
+    # Minuto deslocado para :12 (em vez de :00 em ponto): rodar bem na hora
+    # cheia é o pior horário possível no agendador do GitHub Actions, já que
+    # é quando o maior volume de workflows do GitHub inteiro dispara junto,
+    # aumentando fila e atraso.
+    - cron: "12 11-21 * * 1-6"
   workflow_dispatch: {}
 
 jobs:

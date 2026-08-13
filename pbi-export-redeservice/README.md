@@ -16,7 +16,7 @@ Exporta 3 relatórios do Power BI (Inadimplência, Relacionamento, Vendas), conv
 ## ⚠️ Pontos de atenção
 
 1. **Login Microsoft/MFA**: o login do Power BI passa pela tela da Microsoft. Se a conta tiver MFA ativo, a automação trava em modo headless — veja o README da raiz.
-2. **Conversão xlsx → csv sem Excel**: a versão original abria o Microsoft Excel de verdade (`win32com`) para salvar o CSV, e por padrão regional (pt-BR) o Excel salva CSV com `;` como separador. Reproduzi esse comportamento em `pbi_export.py` (constantes `CSV_DELIMITER` e `CSV_ENCODING` no topo do arquivo), mas **valide o primeiro arquivo importado no RedeService** — se a importação falhar por formato, ajuste essas duas constantes.
+2. **Conversão xlsx → csv sem Excel**: a versão original abria o Microsoft Excel de verdade (`win32com`) para salvar o CSV, que por padrão regional (pt-BR) usa `;` como separador e `cp1252` (ANSI/Windows-1252) como encoding. Reproduzi esse comportamento em `pbi_export.py` (constantes `CSV_DELIMITER` e `CSV_ENCODING` no topo do arquivo) — já corrigido depois de uma importação real ter sido rejeitada pelo backend com `utf-8-sig`. **Sempre confira o histórico de importação dentro do RedeService**, não só o log do script: o upload pode aparecer como "sucesso" no script mesmo quando o backend rejeita o arquivo de forma assíncrona.
 
 ## Rodar localmente (opcional, para testar)
 
@@ -29,4 +29,6 @@ PBI_LOGIN_EMAIL=... PBI_SENHA=... RS_LOGIN=2 RS_SENHA=... PBI_HEADLESS=false pyt
 
 ## Workflow
 
-`.github/workflows/pbi-export.yml` — todo dia às 07:40 (Brasília), igual ao `ControladorPBI.py` original. Em caso de falha, tenta novamente até 3 vezes com 5 minutos de espera entre tentativas. Instala o Google Chrome no runner via `browser-actions/setup-chrome`. Pode ser disparado manualmente em **Actions → Power BI Export + Importacao RedeService → Run workflow**.
+`.github/workflows/pbi-export.yml` — todo dia às ~07:47 (Brasília; deslocado alguns minutos da hora cheia pra sofrer menos atraso de fila do agendador do GitHub, veja o README da raiz), igual ao `ControladorPBI.py` original. Em caso de falha, tenta novamente até 3 vezes com 5 minutos de espera entre tentativas. Instala o Google Chrome no runner via `browser-actions/setup-chrome`. Pode ser disparado manualmente em **Actions → Power BI Export + Importacao RedeService → Run workflow**.
+
+Os relatórios extraídos vão direto para a pasta de destino no Drive (sem subpasta por data) — se já existir um arquivo com o mesmo nome lá, ele é substituído em vez de duplicado.
