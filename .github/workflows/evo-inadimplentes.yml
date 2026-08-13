@@ -1,14 +1,11 @@
 name: EVO AllpFit - Inadimplentes
 
 on:
-  schedule:
-    # Baseado no ControladorEVO.py: 07:00 (Brasília, UTC-3), todos os dias.
-    # Cron do GitHub Actions é sempre em UTC -> alvo 07:00 BRT = 10:00 UTC, mas
-    # deslocado para 10:13 UTC (07:13 BRT): minutos redondos e múltiplos de 5
-    # (:00, :05, :10...) concentram o maior volume de workflows do GitHub
-    # inteiro disparando ao mesmo tempo, o que aumenta a fila e o atraso da
-    # execução agendada. Minutos "quebrados" como :13 sofrem menos disso.
-    - cron: "13 10 * * *"
+  # Agendamento automático PAUSADO a pedido do usuário (13/08/2026). Só roda
+  # manualmente por enquanto. Pra reativar, descomente o bloco "schedule:"
+  # abaixo (horário: 07:13 BRT, todos os dias = "13 10 * * *").
+  # schedule:
+  #   - cron: "13 10 * * *"
   workflow_dispatch: {}
 
 jobs:
