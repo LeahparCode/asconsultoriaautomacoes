@@ -4,10 +4,10 @@ on:
   schedule:
     # Baseado no ControladorPBI.py: 07:40 (Brasília, UTC-3), todos os dias.
     # Cron do GitHub Actions é sempre em UTC -> alvo 07:40 BRT = 10:40 UTC, mas
-    # deslocado para 10:47 UTC (07:47 BRT), fora do minuto "redondo" :40/:45,
-    # pra sofrer menos fila/atraso do agendador do GitHub Actions. Continua
-    # rodando depois do EVO (07:07), sem sobrepor.
-    - cron: "47 10 * * *"
+    # deslocado para 10:53 UTC (07:53 BRT), fora de minutos redondos/múltiplos
+    # de 5, pra sofrer menos fila/atraso do agendador do GitHub Actions.
+    # Continua rodando depois do EVO (07:13), com a mesma folga de ~40min.
+    - cron: "53 10 * * *"
   workflow_dispatch: {}
 
 jobs:

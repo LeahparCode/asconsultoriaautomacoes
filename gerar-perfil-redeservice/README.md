@@ -21,6 +21,6 @@ RS_LOGIN=seu_usuario RS_SENHA=sua_senha python gerar_perfil.py
 
 ## Workflow
 
-`.github/workflows/gerar-perfil.yml` — segunda a sexta às ~08:23 (Brasília; deslocado alguns minutos da hora cheia pra sofrer menos atraso de fila do agendador do GitHub, veja o README da raiz), igual ao `ControladorGerarPerfil.py` original. Em caso de falha, tenta novamente até 3 vezes com 5 minutos de espera entre tentativas. Pode ser disparado manualmente em **Actions → Gerar Perfil - RedeService → Run workflow**.
+`.github/workflows/gerar-perfil.yml` — segunda a sexta às ~08:19 (Brasília; deslocado alguns minutos da hora cheia pra sofrer menos atraso de fila do agendador do GitHub, veja o README da raiz), igual ao `ControladorGerarPerfil.py` original. Em caso de falha, tenta novamente até 3 vezes com 5 minutos de espera entre tentativas. Pode ser disparado manualmente em **Actions → Gerar Perfil - RedeService → Run workflow**.
 
 Em caso de erro, um screenshot (`erro_geracao_perfil.png`) sobe como artefato da execução.
