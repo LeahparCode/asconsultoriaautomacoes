@@ -1,21 +1,19 @@
 # AS Consultoria — Automações
 
-Repositório com as automações web (Playwright/Selenium) que uso pra rodar os processos do dia a dia automaticamente pelo GitHub Actions, uma pasta por automação:
+Repositório com as automações web (Playwright/Selenium) que uso pra rodar os processos do dia a dia sem precisar tocar em nada, uma pasta por automação:
 
 | Pasta | O que faz | Sistema | Horário (BRT) |
 |---|---|---|---|
-| [`gerar-perfil-redeservice/`](gerar-perfil-redeservice) | Dispara a "Geração de Perfil" no RedeService | RedeService (Cartão de Todos) | segunda a sexta, ~08:19 |
-| [`evo-inadimplentes/`](evo-inadimplentes) | Extrai clientes inadimplentes (Salvador + Pernambués) | EVO / AllpFit | todos os dias, ~07:13 |
-| [`pbi-export-redeservice/`](pbi-export-redeservice) | Exporta 3 relatórios do Power BI e reimporta no RedeService | Power BI + RedeService | todos os dias, ~07:53 |
-| [`tableau-agendamentos/`](tableau-agendamentos) | Exporta relatório de agendamentos do mês corrente | Tableau (AmorSaúde) | **de hora em hora (minuto :29), 08h às 18h**, segunda a sábado |
+| [`gerar-perfil-redeservice/`](gerar-perfil-redeservice) | Dispara a "Geração de Perfil" no RedeService | RedeService (Cartão de Todos) | segunda a sexta, 08:30 |
+| [`evo-inadimplentes/`](evo-inadimplentes) | Extrai clientes inadimplentes (Salvador + Pernambués) | EVO / AllpFit | todos os dias, 07:00 |
+| [`pbi-export-redeservice/`](pbi-export-redeservice) | Exporta 3 relatórios do Power BI e reimporta no RedeService | Power BI + RedeService | todos os dias, 07:40 |
+| [`tableau-agendamentos/`](tableau-agendamentos) | Exporta relatório de agendamentos do mês corrente | Tableau (AmorSaúde) | **de hora em hora, 08h às 18h**, segunda a sábado |
 
-Esses horários vieram dos controladores que eu já usava antes (`ControladorGerarPerfil.py`, `ControladorEVO.py`, `ControladorPBI.py`, `Controlador.py`) e estão configurados nos 4 arquivos em `.github/workflows/`.
+Esses horários vieram dos controladores que eu já usava antes (`ControladorGerarPerfil.py`, `ControladorEVO.py`, `ControladorPBI.py`, `Controlador.py`).
 
-> ⏸️ **Agendamento automático pausado.** Por enquanto os 4 workflows só rodam manualmente (`workflow_dispatch`) — comentei o bloco `schedule:` de cada um. O cron de cada horário continua documentado em comentário no próprio `.yml`, é só descomentar quando eu quiser voltar a rodar sozinho.
+> ⚠️ **Importante: quem dispara essas automações NÃO é o `schedule:` do GitHub Actions.** Eu deixei ele comentado de propósito nos 4 `.yml` (dentro de `.github/workflows/`) — não é bug, é assim mesmo. Explico o motivo e como funciona de verdade logo abaixo, na seção 6.
 
-> **Sobre atraso no horário agendado.** O GitHub Actions **não garante** que um `schedule:` dispare no minuto exato — ele enfileira as execuções agendadas, e em momentos de pico (principalmente bem na hora cheia, `:00`) a fila fica maior e o atraso pode passar de 10-20 minutos. Isso é uma limitação da própria plataforma e não tem como ser eliminada 100% num plano gratuito/padrão de Actions. O que dá pra fazer — e já apliquei nos horários acima — é evitar minutos redondos e múltiplos de 5 (`:00`, `:05`, `:10`, `:15`...), que concentram o maior volume de workflows do GitHub inteiro disparando ao mesmo tempo; por isso cada horário ficou deslocado alguns minutos (ex: EVO não roda mais às 07:00 em ponto, e sim 07:13), mantendo a mesma intenção original. Se algum dia precisar de horário exato garantido, a alternativa é disparar manualmente (**Actions → workflow → Run workflow**) ou usar um agendador externo que chame a API do GitHub (`workflow_dispatch`/`repository_dispatch`).
-
-> **Atenção — Tableau roda até 11x por dia.** O `Controlador.py` original não faz uma extração única por mês: ele reexecuta o script **toda hora cheia** dentro do expediente (08h-18h, seg-sáb) pra manter o relatório sempre atualizado, e reproduzi esse comportamento no workflow. Isso dá ~66 execuções de navegador por semana só dessa automação — se a conta do GitHub tiver limite de minutos de Actions (planos gratuitos/Pro de repositórios privados têm cota mensal), vale ficar de olho no consumo em **Settings → Billing → Actions**.
+> **Atenção — Tableau roda até 11x por dia.** O `Controlador.py` original não faz uma extração única por mês: ele reexecuta o script **toda hora cheia** dentro do expediente (08h-18h, seg-sáb) pra manter o relatório sempre atualizado, e reproduzi esse comportamento. Isso dá ~66 execuções de navegador por semana só dessa automação — se a conta do GitHub tiver limite de minutos de Actions (planos gratuitos/Pro de repositórios privados têm cota mensal), vale ficar de olho no consumo em **Settings → Billing → Actions**.
 
 ## O que mudou em relação aos scripts originais
 
@@ -83,24 +81,48 @@ E, dependendo da opção escolhida no passo 1 pro upload no Drive:
 
 Todas as senhas acima estavam em texto puro nos scripts originais — troquei por variável de ambiente e **não existem mais em nenhum arquivo do repositório**.
 
-### 3. Horário (cron) de cada automação
+### 3. Testar manualmente antes de confiar em qualquer agendamento
 
-Os 4 workflows em `.github/workflows/*.yml` estão configurados com os horários dos controladores originais (tabela lá em cima), mas **atualmente pausados** — só rodam manualmente até eu reativar. O cron do GitHub Actions é **sempre em UTC**, e o horário de Brasília é UTC-3 (sem horário de verão atualmente) — por isso cada `cron:` no `.yml` tem um comentário explicando a conversão feita.
+Em cada workflow, na aba **Actions** do GitHub, escolho o workflow → **Run workflow** (botão à direita) pra disparar uma execução manual (`workflow_dispatch`) sem esperar horário nenhum. Isso é essencial pra validar login, seletores e o upload no Drive antes de deixar rodando sozinho.
 
-Pra reativar um agendamento, é só descomentar o bloco `schedule:` no `.yml` correspondente (o cron já fica documentado no comentário). Pra mudar um horário, edito a linha `cron:`. Fórmula rápida: `hora_UTC = hora_Brasília + 3`. Formato do cron: `minuto hora dia-do-mês mês dia-da-semana` (dia-da-semana: `1-5` = segunda a sexta, `1-6` = segunda a sábado, `*` = todo dia).
-
-Cada workflow também reproduz a **lógica de retentativa** do respectivo controlador (número de tentativas e tempo de espera entre elas) — se a execução falhar, ele tenta de novo automaticamente antes de desistir e esperar o próximo ciclo.
-
-### 4. Testar manualmente antes de confiar no agendamento
-
-Em cada workflow, na aba **Actions** do GitHub, escolho o workflow → **Run workflow** (botão à direita) pra disparar uma execução manual (`workflow_dispatch`) sem esperar o horário agendado. Isso é essencial pra validar login, seletores e o upload no Drive antes de deixar rodando sozinho.
-
-### 5. Ressalvas importantes por automação
+### 4. Ressalvas importantes por automação
 
 - **`pbi-export-redeservice`**: a conversão de Excel pra CSV foi refeita sem o Excel, usando delimitador `;` (ponto e vírgula), encoding `cp1252` (ANSI/Windows-1252) e datas/números formatados como o Excel real geraria (`DD/MM/AAAA`, decimal com vírgula), replicando o padrão do "Salvar como CSV" do Excel em pt-BR. **Atenção**: essa base já teve rejeições silenciosas do backend do RedeService (a tela de upload dizia "sucesso", mas o histórico de importação mostrava erro de SQL `LEFT`/`SUBSTRING`) — **sempre confiro o histórico de importação dentro do RedeService**, não só o log do script, pra confirmar que a importação realmente foi processada.
 - **`pbi-export-redeservice`** e **`tableau-agendamentos`**: os logins passam pela tela da Microsoft (Azure AD). Se a conta usada tiver **MFA (autenticação multifator)** ativo, a automação trava no GitHub Actions (não dá pra responder ao código MFA num runner headless). Se acontecer, é preciso isentar essa conta de MFA no Microsoft 365 ou usar uma conta de serviço dedicada sem MFA.
 - **`evo-inadimplentes`**: usa o canal `chrome` real do navegador (não o Chromium genérico) pra reduzir detecção de automação — o workflow já instala isso via `playwright install --with-deps chrome`.
 
-## Estrutura de cada pasta
+### 5. Estrutura de cada pasta
 
 Cada automação é independente: tem seu próprio script Python, `requirements.txt` e (quando precisa enviar arquivo ao Drive) `gdrive_utils.py`. Veja o README de cada pasta pra detalhes específicos.
+
+### 6. Agendamento de verdade: cron-job.org, não o `schedule:` do GitHub
+
+Essa foi a parte mais chata de acertar, então vale documentar bem o porquê.
+
+**O problema**: o `schedule:` nativo do GitHub Actions não dispara no minuto exato. Ele entra numa fila, e em horário de pico — principalmente bem na hora cheia (`:00`), que é quando o maior volume de workflows do GitHub inteiro dispara junto — o atraso passa fácil de 10-20 minutos. Cheguei a tentar contornar isso deslocando os horários pra minutos "quebrados" tipo `:07`, `:13`, `:29` (fora dos múltiplos de 5), mas isso só reduz o problema, não resolve.
+
+**A solução**: tirei o GitHub de responsabilidade pelo horário e passei isso pra um agendador externo, o [cron-job.org](https://cron-job.org) (gratuito, sem limite de jobs). Cada uma das 4 automações tem um job lá que, no horário exato, faz uma chamada `POST` direto pra API do GitHub:
+
+```
+POST https://api.github.com/repos/LeahparCode/asconsultoriaautomacoes/actions/workflows/<arquivo>.yml/dispatches
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"ref":"Nomain"}
+```
+
+Isso dispara o workflow quase instantaneamente, sem cair na fila do `schedule:`. Por isso os 4 `.yml` em `.github/workflows/` têm o bloco `schedule:` **comentado** — deixei documentado ali dentro qual era o cron, só de referência, mas quem manda no horário agora é o painel do cron-job.org, não esse arquivo.
+
+**O que precisa pra isso funcionar (e pra mexer nos horários no futuro):**
+
+1. Um **Personal Access Token do GitHub (fine-grained)**, criado em `github.com/settings/personal-access-tokens`, com acesso só a este repositório e permissão **Actions: Read and write** — sem essa permissão marcada, a API devolve `403 Resource not accessible by integration` (ou às vezes um `404` enganoso, que parece "não achei o repo" mas na real é permissão faltando). Esse token tem validade (coloquei 1 ano) — precisa renovar antes de vencer.
+2. Uma **conta no cron-job.org** com uma **API key** gerada em Console → Settings → API.
+3. Os 4 jobs configurados lá dentro, um por workflow, cada um com o `Authorization: Bearer <token>` no header e o corpo `{"ref":"Nomain"}`.
+
+**Duas pegadinhas que me pegaram na hora de configurar via API deles**, deixando registrado pra não cair de novo:
+- O `Content-Type` da chamada pra API do cron-job.org tem que ser **exatamente** `application/json` — se vier com `; charset=utf-8` no final, a API deles trata o corpo como vazio e devolve `400`.
+- A API deles tem rate limit de **1 requisição/segundo** (5/minuto) pra criar job — se mandar tudo de uma vez, os jobs seguintes voltam com `429 Too Many Requests`.
+
+Pra mudar um horário: entro direto no painel do cron-job.org (`cron-job.org/en/members/jobs/`), edito o job, e pronto — não precisa mexer em nada aqui no repositório.
+
+Se um dia eu quiser voltar a usar só o `schedule:` do GitHub (por exemplo, se abandonar o cron-job.org), é só descomentar o bloco no `.yml` correspondente e desativar o job lá no painel deles, pra não disparar duas vezes.
