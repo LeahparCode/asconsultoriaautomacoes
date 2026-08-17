@@ -59,3 +59,13 @@ jobs:
           name: erro-gerar-perfil
           path: gerar-perfil-redeservice/erro_geracao_perfil.png
           if-no-files-found: ignore
+
+      - name: Notificar falha no WhatsApp
+        if: failure()
+        run: |
+          MSG="⚠️ ${{ github.workflow }} falhou. Ver: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -G "https://api.callmebot.com/whatsapp.php" \
+            --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
+            --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
+            --data-urlencode "text=$MSG" \
+            || echo "Aviso: falha ao enviar notificação no WhatsApp (não interrompe o workflow)."
