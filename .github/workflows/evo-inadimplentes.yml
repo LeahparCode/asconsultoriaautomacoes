@@ -8,6 +8,9 @@ on:
   #   - cron: "13 10 * * *"
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   evo-inadimplentes:
     runs-on: ubuntu-latest
@@ -74,15 +77,12 @@ jobs:
           path: evo-inadimplentes/downloads/**
           if-no-files-found: ignore
 
-      - name: Notificar sucesso no WhatsApp
+      - name: Registrar sucesso no status diário
         if: success()
+        working-directory: ${{ github.workspace }}
         run: |
-          MSG="✅ ${{ github.workflow }} concluído com sucesso."
-          curl -sS -G "https://api.callmebot.com/whatsapp.php" \
-            --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
-            --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
-            --data-urlencode "text=$MSG" \
-            || echo "Aviso: falha ao enviar notificação no WhatsApp (não interrompe o workflow)."
+          python3 scripts/atualizar_status.py evo sucesso
+          bash scripts/commit_status.sh
 
       - name: Notificar falha no WhatsApp
         if: failure()
@@ -93,3 +93,10 @@ jobs:
             --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
             --data-urlencode "text=$MSG" \
             || echo "Aviso: falha ao enviar notificação no WhatsApp (não interrompe o workflow)."
+
+      - name: Registrar falha no status diário
+        if: failure()
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 scripts/atualizar_status.py evo falha
+          bash scripts/commit_status.sh

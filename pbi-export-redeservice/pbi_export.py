@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 import sys
 import time
@@ -162,7 +163,20 @@ class FileProcessor:
         return valor
 
     @staticmethod
-    def processar_planilha_inadimplencia(caminho_xlsx: Path) -> Path:
+    def contar_linhas(caminho_xlsx: Path, linha_inicio: int = 2) -> int:
+        """Conta quantas linhas de dado tem uma planilha (ignorando o cabeçalho)."""
+        wb = openpyxl.load_workbook(caminho_xlsx, read_only=True)
+        ws = wb.active
+        ultima_linha = ws.max_row
+        while ultima_linha >= linha_inicio:
+            if any(cell.value is not None for cell in ws[ultima_linha]):
+                break
+            ultima_linha -= 1
+        wb.close()
+        return max(0, ultima_linha - linha_inicio + 1)
+
+    @staticmethod
+    def processar_planilha_inadimplencia(caminho_xlsx: Path) -> tuple[Path, int]:
         """
         Preenche a coluna X com 'Base_<Mês>' e converte para CSV.
 
@@ -205,7 +219,8 @@ class FileProcessor:
         wb.close()
         print(f"✅ CSV gerado: {caminho_csv.name}")
 
-        return caminho_csv
+        contagem = max(0, LINHA_FIM - LINHA_INICIO + 1)
+        return caminho_csv, contagem
 
 
 class BrowserFactory:
@@ -868,6 +883,9 @@ def main():
     arquivo_csv_inadimplencia = None
     arquivo_relacionamento = None
     arquivo_vendas = None
+    contagem_inadimplencia = 0
+    contagem_relacionamento = 0
+    contagem_vendas = 0
 
     # --- ETAPA 1: DOWNLOADS POWER BI ---
     driver_pbi = BrowserFactory.create_chrome()
@@ -880,7 +898,7 @@ def main():
         pbi_bot.enter_report_context()
         pbi_bot.aplicar_filtro_coluna_exata(FRANQUIAS)
         base_1_xlsx = pbi_bot.download_report("BASE_INADIMPLENCIA")
-        arquivo_csv_inadimplencia = FileProcessor.processar_planilha_inadimplencia(base_1_xlsx)
+        arquivo_csv_inadimplencia, contagem_inadimplencia = FileProcessor.processar_planilha_inadimplencia(base_1_xlsx)
 
         print("\n========== RELATÓRIO 2: RELACIONAMENTO ==========")
         driver_pbi.get(URL_RELACIONAMENTO)
@@ -888,12 +906,14 @@ def main():
         pbi_bot.aplicar_filtro_franquia_popup(FRANQUIAS)
         pbi_bot.aplicar_filtro_data_filiacao(DATA_FILIACAO_INICIO)
         arquivo_relacionamento = pbi_bot.download_report("BASE_RELACIONAMENTO")
+        contagem_relacionamento = FileProcessor.contar_linhas(arquivo_relacionamento)
 
         print("\n========== RELATÓRIO 3: VENDAS ==========")
         driver_pbi.get(URL_VENDAS)
         pbi_bot.enter_report_context()
         pbi_bot.aplicar_filtro_coluna_exata(FRANQUIAS_VENDAS)
         arquivo_vendas = pbi_bot.download_report("BASE_VENDAS", titulo="Filiados Inativos")
+        contagem_vendas = FileProcessor.contar_linhas(arquivo_vendas)
 
     except Exception as e:
         nome_print = f"erro_pbi_{datetime.now().strftime('%H%M%S')}.png"
@@ -936,6 +956,14 @@ def main():
 
         print("\n--- Importação 3: BASE_VENDAS ---")
         rs_bot.importar_base("82", arquivo_vendas)
+
+        with open("contagens.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "inadimplencia": contagem_inadimplencia,
+                "relacionamento": contagem_relacionamento,
+                "vendas": contagem_vendas,
+            }, f)
+        print(f"\n📊 Linhas importadas — Inadimplência: {contagem_inadimplencia}, Relacionamento: {contagem_relacionamento}, Vendas: {contagem_vendas}")
 
     except Exception as e:
         nome_print = f"erro_rs_{datetime.now().strftime('%H%M%S')}.png"

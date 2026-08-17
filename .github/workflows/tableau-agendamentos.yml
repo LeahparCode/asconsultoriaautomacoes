@@ -9,6 +9,9 @@ on:
   #   - cron: "29 11-21 * * 1-6"
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   tableau-agendamentos:
     runs-on: ubuntu-latest
@@ -67,20 +70,17 @@ jobs:
           path: tableau-agendamentos/downloads/**
           if-no-files-found: ignore
 
-      - name: Notificar sucesso no WhatsApp (só na 1ª execução do dia, 08h BRT)
+      - name: Registrar sucesso no status diário (só na 1ª execução do dia, 08h BRT)
         if: success()
+        working-directory: ${{ github.workspace }}
         run: |
           HORA_BRT=$(TZ="America/Sao_Paulo" date +%H)
           if [ "$HORA_BRT" != "08" ]; then
-            echo "Não é a primeira execução do dia (hora atual: ${HORA_BRT}h BRT) — pulando notificação de sucesso, senão vira spam a cada hora."
+            echo "Não é a primeira execução do dia (hora atual: ${HORA_BRT}h BRT) — pulando registro de status, senão o 'Tableau (1ª execução)' do resumo diário ficaria sendo sobrescrito a cada hora."
             exit 0
           fi
-          MSG="✅ ${{ github.workflow }} atualizado (primeira execução do dia)."
-          curl -sS -G "https://api.callmebot.com/whatsapp.php" \
-            --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
-            --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
-            --data-urlencode "text=$MSG" \
-            || echo "Aviso: falha ao enviar notificação no WhatsApp (não interrompe o workflow)."
+          python3 scripts/atualizar_status.py tableau_primeira_execucao sucesso
+          bash scripts/commit_status.sh
 
       - name: Notificar falha no WhatsApp
         if: failure()
@@ -91,3 +91,15 @@ jobs:
             --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
             --data-urlencode "text=$MSG" \
             || echo "Aviso: falha ao enviar notificação no WhatsApp (não interrompe o workflow)."
+
+      - name: Registrar falha no status diário (só na 1ª execução do dia, 08h BRT)
+        if: failure()
+        working-directory: ${{ github.workspace }}
+        run: |
+          HORA_BRT=$(TZ="America/Sao_Paulo" date +%H)
+          if [ "$HORA_BRT" != "08" ]; then
+            echo "Não é a primeira execução do dia (hora atual: ${HORA_BRT}h BRT) — o campo 'Tableau (1ª execução)' só reflete o resultado das 08h."
+            exit 0
+          fi
+          python3 scripts/atualizar_status.py tableau_primeira_execucao falha
+          bash scripts/commit_status.sh

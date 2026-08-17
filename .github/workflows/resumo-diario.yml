@@ -1,0 +1,26 @@
+name: Resumo Diário
+
+on:
+  # Disparado 1x por dia (09:00 BRT) por um job externo no cron-job.org,
+  # depois que Gerar Perfil, EVO, PBI e a 1ª execução do Tableau já rodaram
+  # — veja a seção 7 do README da raiz. Não usa "schedule:" nativo do
+  # GitHub pelo mesmo motivo dos outros 4 workflows (atraso de fila).
+  workflow_dispatch: {}
+
+jobs:
+  resumo-diario:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Montar e enviar resumo no WhatsApp
+        env:
+          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+        run: python3 scripts/enviar_resumo_diario.py
