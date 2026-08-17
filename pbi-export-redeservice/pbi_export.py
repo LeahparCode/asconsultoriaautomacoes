@@ -799,6 +799,12 @@ class RedeServiceBot:
         # a navegação seguinte roda ainda em cima da tela de login e nada
         # do que vem depois encontra o que precisa.
         WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
+        # O formulário de login sair da tela não significa que a sessão já
+        # está firmada no servidor (visto em produção: a navegação seguinte
+        # caía de volta pro login, repetidas vezes, logo após um login que
+        # tinha acabado de "passar"). Dá um respiro pra sessão assentar
+        # antes de qualquer navegação subsequente.
+        time.sleep(4)
 
     def abrir_pagina_importacao(self, via_menu: bool = False):
         """
