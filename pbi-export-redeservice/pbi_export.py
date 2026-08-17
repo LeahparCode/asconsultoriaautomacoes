@@ -138,196 +138,29 @@ class FileProcessor:
         raise TimeoutException("Download não finalizou dentro do tempo limite.")
 
     @staticmethod
-    def _secao_positiva(fmt: str) -> str:
+    def _valor_csv(valor):
         """
-        Um number_format do Excel pode ter até 4 seções separadas por ';'
-        (positivo;negativo;zero;texto). Pra escrever no CSV interessa a
-        primeira. O split ignora ';' dentro de aspas ou escapado com '\\'.
+        Formata um valor de célula do jeito que o Excel em pt-BR escreveria
+        num "Salvar como CSV": data em DD/MM/AAAA e número decimal com
+        vírgula.
+
+        ATENÇÃO — NÃO MUDAR O FORMATO DE DATA SEM CONFIRMAR NO GESTÃO.
+        Já tentei "melhorar" isso renderizando a data conforme o
+        number_format da célula (a coluna "Data filiação" vem com formato
+        mm-dd-yy, o que daria "08-17-26"). O RedeService NÃO leu a base
+        assim — o formato certo é este aqui, DD/MM/AAAA com barra.
         """
-        partes, atual, dentro_aspas = [], "", False
-        i = 0
-        while i < len(fmt):
-            ch = fmt[i]
-            if ch == '"':
-                dentro_aspas = not dentro_aspas
-                atual += ch
-            elif ch == "\\" and i + 1 < len(fmt):
-                atual += fmt[i:i + 2]
-                i += 1
-            elif ch == ";" and not dentro_aspas:
-                partes.append(atual)
-                atual = ""
-            else:
-                atual += ch
-            i += 1
-        partes.append(atual)
-        return partes[0]
-
-    # Tokens de data/hora do Excel -> strftime. Ordem importa: os mais
-    # longos primeiro, senão 'mm' seria consumido como dois 'm'.
-    _TOKENS_DATA = [
-        ("yyyy", "%Y"), ("yy", "%y"),
-        ("dddd", "%A"), ("ddd", "%a"), ("dd", "%d"), ("d", "%-d"),
-        ("hh", "%H"), ("h", "%-H"),
-        ("ss", "%S"), ("s", "%-S"),
-    ]
-
-    @staticmethod
-    def _render_data(valor, fmt: str) -> str:
-        """
-        Renderiza uma data/hora exatamente como o Excel mostraria com aquele
-        number_format — que é o que o "Salvar como CSV" grava no arquivo.
-
-        Isso importa MUITO: a coluna "Data filiação" da base de Inadimplência
-        vem com fmt 'mm-dd-yy', então o Excel gravava '08-17-26' (com traço).
-        Gravar '17/08/2026 09:23:45' no lugar quebra a procedure do
-        RedeService, que fatia a data procurando o traço — sem traço o
-        CHARINDEX volta 0, o length vira -1 e estoura "Invalid length
-        parameter passed to the LEFT or SUBSTRING function".
-        """
-        secao = FileProcessor._secao_positiva(fmt or "")
-        if not secao or secao.strip().lower() == "general":
-            return valor.strftime("%d/%m/%Y") if (
-                not isinstance(valor, datetime)
-                or (valor.hour, valor.minute, valor.second) == (0, 0, 0)
-            ) else valor.strftime("%d/%m/%Y %H:%M:%S")
-
-        saida = ""
-        i = 0
-        while i < len(secao):
-            resto = secao[i:]
-
-            # Literal entre aspas: "R$" -> R$
-            if resto[0] == '"':
-                fim = resto.find('"', 1)
-                if fim == -1:
-                    saida += resto[1:]
-                    break
-                saida += resto[1:fim]
-                i += fim + 1
-                continue
-
-            # Caractere escapado: \, -> ,
-            if resto[0] == "\\" and len(resto) > 1:
-                saida += resto[1]
-                i += 2
-                continue
-
-            baixo = resto.lower()
-
-            # 'm'/'mm' é MINUTO se vier logo depois de hora, senão é MÊS.
-            if baixo.startswith("m"):
-                qtd = len(baixo) - len(baixo.lstrip("m"))
-                anterior = secao[:i].lower().rstrip(" :-/.")
-                eh_minuto = anterior.endswith("h")
-                if eh_minuto:
-                    saida += valor.strftime("%M" if qtd >= 2 else "%-M")
-                elif qtd >= 4:
-                    saida += MESES_PT[valor.month]
-                elif qtd == 3:
-                    saida += MESES_PT[valor.month][:3]
-                else:
-                    saida += valor.strftime("%m" if qtd >= 2 else "%-m")
-                i += qtd
-                continue
-
-            for token, diretiva in FileProcessor._TOKENS_DATA:
-                if baixo.startswith(token):
-                    saida += valor.strftime(diretiva)
-                    i += len(token)
-                    break
-            else:
-                saida += resto[0]
-                i += 1
-
-        return saida
-
-    @staticmethod
-    def _render_numero(valor, fmt: str) -> str:
-        """
-        Renderiza um número como o Excel em pt-BR mostraria: separador de
-        milhar '.', decimal ',', e as casas decimais/textos literais que o
-        number_format manda (ex: '"R$"\\ #,##0.00' -> 'R$ 1.234,50').
-        """
-        secao = FileProcessor._secao_positiva(fmt or "")
-        if not secao or secao.strip().lower() == "general":
-            if isinstance(valor, int):
-                return str(valor)
-            texto = f"{valor:.10f}".rstrip("0").rstrip(".")
-            return texto.replace(".", ",")
-
-        # Separa literais dos marcadores de dígito (# 0 . ,)
-        prefixo, nucleo, sufixo = "", "", ""
-        i = 0
-        while i < len(secao):
-            ch = secao[i]
-            if ch == '"':
-                fim = secao.find('"', i + 1)
-                trecho = secao[i + 1:fim] if fim != -1 else secao[i + 1:]
-                if nucleo:
-                    sufixo += trecho
-                else:
-                    prefixo += trecho
-                i = (fim + 1) if fim != -1 else len(secao)
-                continue
-            if ch == "\\" and i + 1 < len(secao):
-                if nucleo:
-                    sufixo += secao[i + 1]
-                else:
-                    prefixo += secao[i + 1]
-                i += 2
-                continue
-            if ch in "#0.,":
-                nucleo += ch
-                i += 1
-                continue
-            if ch == "%":
-                sufixo += "%"
-                i += 1
-                continue
-            if nucleo:
-                sufixo += ch
-            else:
-                prefixo += ch
-            i += 1
-
-        if "%" in sufixo:
-            valor = valor * 100
-
-        if "." in nucleo:
-            casas = len(nucleo.split(".")[-1].replace(",", ""))
-        else:
-            casas = 0
-        usa_milhar = "," in nucleo.split(".")[0]
-
-        texto = f"{abs(float(valor)):,.{casas}f}"          # 1,234.50 (padrão en)
-        texto = texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
-        if not usa_milhar:
-            texto = texto.replace(".", "")
-        if float(valor) < 0:
-            texto = "-" + texto
-
-        return f"{prefixo}{texto}{sufixo}"
-
-    @staticmethod
-    def _valor_csv(cell):
-        """
-        Converte uma célula pro texto que o Excel gravaria no CSV.
-
-        Recebe a CÉLULA (não só o valor) porque o texto depende do
-        number_format dela — foi justamente ignorar isso que fez a
-        importação de Inadimplência ser rejeitada pelo RedeService.
-        """
-        valor = cell.value
         if valor is None:
             return ""
-        fmt = cell.number_format or "General"
-        if isinstance(valor, (datetime, date)):
-            return FileProcessor._render_data(valor, fmt)
-        if isinstance(valor, bool):
-            return "VERDADEIRO" if valor else "FALSO"
-        if isinstance(valor, (int, float)):
-            return FileProcessor._render_numero(valor, fmt)
+        if isinstance(valor, datetime):
+            if (valor.hour, valor.minute, valor.second) == (0, 0, 0):
+                return valor.strftime("%d/%m/%Y")
+            return valor.strftime("%d/%m/%Y %H:%M:%S")
+        if isinstance(valor, date):
+            return valor.strftime("%d/%m/%Y")
+        if isinstance(valor, float):
+            texto = f"{valor:.10f}".rstrip("0").rstrip(".")
+            return texto.replace(".", ",")
         return valor
 
     @staticmethod
@@ -401,7 +234,7 @@ class FileProcessor:
         with open(caminho_csv, "w", newline="", encoding=CSV_ENCODING) as f:
             writer = csv.writer(f, delimiter=CSV_DELIMITER)
             for row in ws.iter_rows(min_row=1, max_row=LINHA_FIM):
-                writer.writerow([FileProcessor._valor_csv(cell) for cell in row])
+                writer.writerow([FileProcessor._valor_csv(cell.value) for cell in row])
 
         wb.close()
         print(f"✅ CSV gerado: {caminho_csv.name}")
