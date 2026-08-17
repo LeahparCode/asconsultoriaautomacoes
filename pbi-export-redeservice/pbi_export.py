@@ -929,12 +929,19 @@ class RedeServiceBot:
         if self._esta_na_tela_login():
             self._fazer_login()
             self.driver.get(self.URL_IMPORTACAO)
-        celulas = WebDriverWait(self.driver, 15).until(
+        # Mesmo caso da navegação direta em abrir_pagina_importacao(): pular
+        # o roteamento da SPA faz o binding de eventos/dados do Angular
+        # (e o fetch da grade em si, via API) levarem mais tempo pra
+        # terminar do que o simples "elemento presente no DOM" garante.
+        # Sem esse respiro, a espera abaixo estourava (TimeoutException
+        # com mensagem vazia) mesmo com a sessão autenticada e estável.
+        time.sleep(3)
+        celulas = WebDriverWait(self.driver, 30).until(
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, seletor))
         )
         return celulas[0].text.strip() if celulas else None
 
-    def _confirmar_importacao_no_grid(self, nome_arquivo: str, timeout: int = 150, intervalo: int = 8):
+    def _confirmar_importacao_no_grid(self, nome_arquivo: str, timeout: int = 210, intervalo: int = 8):
         """
         O RedeService não mostra NENHUMA confirmação na tela depois de
         clicar em "Enviar" (nem toast, nem alerta) — confirmado com o
