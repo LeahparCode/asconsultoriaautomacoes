@@ -791,7 +791,17 @@ class RedeServiceBot:
         print("✅ Logado e na página de Importação.")
 
     def _esta_na_tela_login(self) -> bool:
-        return bool(self.driver.find_elements(By.ID, "Login")) and bool(self.driver.find_elements(By.ID, "PasswordTextBox"))
+        # find_elements() só confere presença no DOM, não visibilidade — se o
+        # SPA mantém esses campos escondidos fora da tela de login (comum em
+        # Angular, reaproveitando o mesmo template), isso dava falso
+        # positivo em qualquer outra tela. Um falso positivo aqui dispara um
+        # login_and_navigate() desnecessário no meio do fluxo — logar de novo
+        # com a mesma conta tendo uma sessão já válida é candidato bem forte
+        # a ser o motivo do RedeService derrubar a sessão (sessaoInvalida=1)
+        # visto em produção, mesmo sem ninguém mais usando o mesmo login.
+        logins = [e for e in self.driver.find_elements(By.ID, "Login") if e.is_displayed()]
+        senhas = [e for e in self.driver.find_elements(By.ID, "PasswordTextBox") if e.is_displayed()]
+        return bool(logins) and bool(senhas)
 
     def _fazer_login(self):
         WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
@@ -864,7 +874,7 @@ class RedeServiceBot:
         """Clica em 'Novo' e espera o formulário abrir; tenta de novo uma vez se não abrir."""
         for tentativa in range(2):
             if self._esta_na_tela_login():
-                print("⚠️ A sessão caiu de volta para a tela de login do RedeService; refazendo login...")
+                print(f"⚠️ A sessão caiu de volta para a tela de login do RedeService (URL: {self.driver.current_url}); refazendo login...")
                 self.login_and_navigate()
 
             WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
