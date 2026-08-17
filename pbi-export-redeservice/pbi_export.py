@@ -782,22 +782,23 @@ class RedeServiceBot:
     def login_and_navigate(self):
         print("🌐 Iniciando importação no RedeService...")
         self.driver.get(RS_URL_IMPORT)
+        self._fazer_login()
+        self.abrir_pagina_importacao(via_menu=True)
+        print("✅ Logado e na página de Importação.")
+
+    def _esta_na_tela_login(self) -> bool:
+        return bool(self.driver.find_elements(By.ID, "Login")) and bool(self.driver.find_elements(By.ID, "PasswordTextBox"))
+
+    def _fazer_login(self):
         WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
         WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
-
         # Espera o pós-login terminar de verdade (sair da tela de login)
         # antes de navegar. Sem isso, se o redirecionamento demorar um
         # pouco mais (o site mudou o frontend, pode ter ficado mais lento),
         # a navegação seguinte roda ainda em cima da tela de login e nada
         # do que vem depois encontra o que precisa.
         WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
-
-        self.abrir_pagina_importacao(via_menu=True)
-        print("✅ Logado e na página de Importação.")
-
-    def _esta_na_tela_login(self) -> bool:
-        return bool(self.driver.find_elements(By.ID, "Login")) and bool(self.driver.find_elements(By.ID, "PasswordTextBox"))
 
     def abrir_pagina_importacao(self, via_menu: bool = False):
         """
@@ -839,10 +840,7 @@ class RedeServiceBot:
             # Refaz o login aqui mesmo, sem chamar login_and_navigate() de
             # volta (evita recursão) — depois tenta a URL direta outra vez.
             print("⚠️ Navegação direta caiu na tela de login; refazendo login...")
-            WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
-            WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
-            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
-            WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
+            self._fazer_login()
             self.driver.get(self.URL_IMPORTACAO)
 
         self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
@@ -907,8 +905,53 @@ class RedeServiceBot:
         time.sleep(10)
 
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "btnEnviar"))))
-        print(f"🚀 Importação (Layout {layout_value}) enviada com sucesso!")
-        time.sleep(5)
+        print(f"📤 Clique em Enviar (Layout {layout_value}) feito; confirmando no histórico do RedeService...")
+
+        self._confirmar_importacao_no_grid(caminho_csv.name)
+        print(f"🚀 Importação (Layout {layout_value}) confirmada no histórico do RedeService!")
+
+    def _confirmar_importacao_no_grid(self, nome_arquivo: str, timeout: int = 90, intervalo: int = 5):
+        """
+        O RedeService não mostra NENHUMA confirmação na tela depois de
+        clicar em "Enviar" (nem toast, nem alerta) — confirmado com o
+        usuário, que também não vê nada ao importar manualmente. A única
+        forma de saber se a importação foi aceita de verdade é a mesma que
+        o usuário usa: conferir se surge uma linha nova, no topo da grade
+        de histórico (ordenada da mais recente pra mais antiga), com o
+        nome do arquivo que acabou de subir — célula
+        `td.grid-cell[data-name='log_arquivo']` na tela de Importação.
+
+        Sem essa checagem, o script clicava em "Enviar" e já dava a
+        importação como sucesso mesmo quando o RedeService não processava
+        nada — era exatamente esse o bug reportado.
+        """
+        FILENAME_SELECTOR = "td.grid-cell[data-name='log_arquivo']"
+
+        self.driver.get(self.URL_IMPORTACAO)
+        if self._esta_na_tela_login():
+            self._fazer_login()
+            self.driver.get(self.URL_IMPORTACAO)
+        celulas = WebDriverWait(self.driver, 15).until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, FILENAME_SELECTOR))
+        )
+        topo_antes = celulas[0].text.strip() if celulas else None
+
+        fim = time.time() + timeout
+        topo_depois = topo_antes
+        while time.time() < fim:
+            time.sleep(intervalo)
+            self.driver.get(self.URL_IMPORTACAO)
+            celulas = WebDriverWait(self.driver, 15).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, FILENAME_SELECTOR))
+            )
+            topo_depois = celulas[0].text.strip() if celulas else None
+            if topo_depois == nome_arquivo and topo_depois != topo_antes:
+                return
+        raise RuntimeError(
+            f"'{nome_arquivo}' não apareceu como linha nova no topo do histórico de Importação do "
+            f"RedeService depois de {timeout}s (topo da grade continua sendo '{topo_depois}'). "
+            f"O clique em Enviar não gerou nenhuma importação de verdade."
+        )
 
 
 # ==========================================

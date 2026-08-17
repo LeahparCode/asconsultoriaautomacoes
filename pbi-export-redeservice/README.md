@@ -24,6 +24,8 @@ Exporta 3 relatórios do Power BI (Inadimplência, Relacionamento, Vendas), conv
 
    **Sempre confira o histórico de importação dentro do RedeService**, não só o log do script: o upload aparece como "sucesso" no script mesmo quando o backend rejeita o arquivo depois, de forma assíncrona.
 
+3. **O RedeService não mostra nenhuma confirmação depois de clicar em "Enviar"** (nem toast, nem alerta — confirmado com o usuário, que também não vê nada ao importar manualmente). Por isso o script clicava em "Enviar" e já dava a importação como sucesso sem checar nada, mesmo quando o RedeService não processava o arquivo. Agora, depois do clique, `RedeServiceBot._confirmar_importacao_no_grid()` volta pra tela de Importação (`.../cobranca.be.cartaotodos/Importacao`) e confere se surgiu uma linha nova no topo da grade de histórico (célula `td.grid-cell[data-name="log_arquivo"]`) com o nome do arquivo enviado — a mesma checagem manual que o usuário faz. Se não aparecer em até 90s, o script falha de verdade (e entra no retry) em vez de mentir dizendo que deu certo.
+
 ## Rodar localmente (opcional, para testar)
 
 ```bash
