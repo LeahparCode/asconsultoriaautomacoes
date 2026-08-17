@@ -127,9 +127,9 @@ Isso dispara o workflow quase instantaneamente, sem cair na fila do `schedule:`.
 
 Pra mudar um horário: entro direto no painel do cron-job.org (`cron-job.org/en/members/jobs/`), edito o job, e pronto — não precisa mexer em nada aqui no repositório.
 
-### 7. Aviso no WhatsApp de sucesso e de falha
+### 7. Aviso no WhatsApp quando alguma automação falha
 
-Antes disso eu só descobria que algo tinha quebrado (ou funcionado) se entrasse manualmente no GitHub Actions ou percebesse que um relatório chegou ou não no Drive. Agora chega aviso direto no meu WhatsApp nos dois casos.
+Antes disso eu só descobria que algo tinha quebrado se entrasse manualmente no GitHub Actions ou percebesse que um relatório não chegou no Drive. Agora, se um dos 4 workflows falhar depois de esgotar todas as tentativas, chega um aviso direto no meu WhatsApp — em qualquer horário, inclusive numa falha do Tableau às 15h, não só na primeira execução do dia.
 
 Uso o **CallMeBot**, que é grátis mas só serve pra mandar mensagem pra mim mesmo (não dá — e nem devia — pra usar isso pra avisar cliente). Configuração:
 
@@ -138,13 +138,40 @@ Uso o **CallMeBot**, que é grátis mas só serve pra mandar mensagem pra mim me
 3. Em menos de 2 minutos o bot respondeu com a minha apikey.
 4. Cadastrei `CALLMEBOT_PHONE` (meu número, com código do país, sem `+`) e `CALLMEBOT_APIKEY` (a chave que recebi) como Secrets do repositório.
 
-Cada workflow tem dois passos de notificação no final:
-
-- **`Notificar sucesso no WhatsApp`** (`if: success()`) — Gerar Perfil, EVO e PBI mandam essa mensagem em toda execução bem-sucedida, já que rodam só 1x por dia cada. **O Tableau é diferente**: como ele roda até 11x por dia (de hora em hora, 08h-18h), notificar em toda execução viraria spam — então esse passo confere a hora atual em BRT e só manda a mensagem se for **08h** (a primeira execução do dia); nas outras 10 execuções ele pula silenciosamente.
-- **`Notificar falha no WhatsApp`** (`if: failure()`) — roda quando a automação falha de vez, depois de esgotar as retentativas, em qualquer horário (uma falha às 15h do Tableau também avisa, não só a das 8h).
+Cada workflow tem um passo `Notificar falha no WhatsApp` (`if: failure()`) no final, que roda quando a automação falha de vez.
 
 Se algum dia eu quiser trocar o WhatsApp por e-mail/Telegram/Slack, é só trocar esses passos em cada `.yml` — o resto do workflow não muda.
 
 **Pegadinha que me pegou na hora de ativar**: o `CALLMEBOT_PHONE` precisa ser **exatamente** o número que mandou a mensagem de ativação pro bot — mesma quantidade de dígitos, sem um `9` a mais nem a menos. Se o número no secret não bater direitinho com o que o CallMeBot tem cadastrado pra aquela apikey, ele responde `APIKey is invalid` mesmo com a apikey certa (a mensagem de erro engana, parece problema na apikey, mas era o telefone). Testei end-to-end forçando uma falha proposital numa branch descartável e só validei o `CALLMEBOT_APIKEY` como certo depois de ajustar o número — se acontecer nível "chega no log como sucesso mas não chega no WhatsApp", o primeiro lugar a olhar é a resposta que o CallMeBot devolve (dá pra adicionar um `echo` temporário no passo pra ver o corpo da resposta, foi assim que descobri).
 
 Se um dia eu quiser voltar a usar só o `schedule:` do GitHub (por exemplo, se abandonar o cron-job.org), é só descomentar o bloco no `.yml` correspondente e desativar o job lá no painel deles, pra não disparar duas vezes.
+
+### 8. Resumo diário no WhatsApp (em vez de um aviso por execução)
+
+No começo, cada workflow mandava seu próprio "✅ sucesso" na hora — mas isso virava 3-4 mensagens separadas todo dia (mais a do Tableau). Troquei por **um resumo único de manhã**, com a contagem de linhas importadas nas 3 bases do PBI.
+
+Como funciona:
+
+1. Em vez de mandar WhatsApp direto, cada um dos 4 workflows grava o resultado (sucesso/falha) num arquivo `status/hoje.json` no próprio repositório, usando `scripts/atualizar_status.py` — e dá commit nisso automaticamente (`scripts/commit_status.sh`). Se a data no arquivo for de ontem, ele reseta sozinho antes de gravar, então não precisa de nenhum passo separado pra "zerar o dia".
+   - O PBI também grava a quantidade de linhas de cada base (Inadimplência, Relacionamento, Vendas) — o `pbi_export.py` conta isso automaticamente depois de completar as 3 importações e salva num `contagens.json` temporário, que o workflow lê e junta ao status.
+   - O Tableau só grava status na **1ª execução do dia (08h BRT)** — nas outras 10 execuções horárias ele confere a hora e pula, pra não sobrescrever à toa o campo "1ª execução" com resultados do meio do dia.
+2. Um **5º workflow, `resumo-diario.yml`**, disparado 1x por dia às **09:00 BRT** (depois que as 4 automações diárias já rodaram) por mais um job no cron-job.org, lê `status/hoje.json` e manda a mensagem consolidada via `scripts/enviar_resumo_diario.py`. Fica mais ou menos assim:
+
+   ```
+   📊 Resumo do dia 17-08-2026
+   Gerar Perfil: ✅
+   EVO Inadimplentes: ✅
+   PBI Export: ✅
+     • Inadimplência: 1234
+     • Relacionamento: 567
+     • Vendas: 890
+   Tableau (1ª execução): ✅
+
+   Total: 4/4 OK
+   ```
+
+   Automação que ainda não rodou naquele dia (ex: Gerar Perfil no fim de semana, já que só roda seg-sex) aparece como "⏳ não rodou" e não entra no total.
+
+O aviso de **falha continua imediato**, sem passar pelo resumo — se algo quebrar às 10h da manhã eu quero saber na hora, não esperar o resumo do dia seguinte.
+
+Pra esse 5º job funcionar, precisei dar permissão de escrita pro `GITHUB_TOKEN` automático de cada workflow (`permissions: contents: write` no topo do `.yml`) — sem isso o `git push` do status falha. Como em teoria dois workflows podem terminar quase juntos e tentar commitar ao mesmo tempo, `commit_status.sh` tenta de novo (com `git pull --rebase`) até 3 vezes antes de desistir — nesse caso raríssimo, o campo daquela automação simplesmente não aparece no resumo daquele dia, mas o resto continua funcionando.
