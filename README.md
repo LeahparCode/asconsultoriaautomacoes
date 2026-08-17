@@ -68,6 +68,8 @@ No repositório: **Settings → Secrets and variables → Actions → New reposi
 | `GDRIVE_FOLDER_EVO_ID` | EVO Inadimplentes | ID da pasta "Relatórios EVO" no Drive |
 | `GDRIVE_FOLDER_PBI_ID` | PBI Export | ID da pasta "Relatorios PBI" no Drive |
 | `GDRIVE_FOLDER_TABLEAU_ID` | Tableau Agendamentos | ID da pasta "Agendamentos" no Drive |
+| `CALLMEBOT_PHONE` | Notificação de falha (todas) | meu número de WhatsApp com código do país, sem `+` (ex: `5571999999999`) |
+| `CALLMEBOT_APIKEY` | Notificação de falha (todas) | apikey que o bot do CallMeBot manda por WhatsApp na ativação — veja a seção 7 |
 
 E, dependendo da opção escolhida no passo 1 pro upload no Drive:
 
@@ -124,5 +126,18 @@ Isso dispara o workflow quase instantaneamente, sem cair na fila do `schedule:`.
 - A API deles tem rate limit de **1 requisição/segundo** (5/minuto) pra criar job — se mandar tudo de uma vez, os jobs seguintes voltam com `429 Too Many Requests`.
 
 Pra mudar um horário: entro direto no painel do cron-job.org (`cron-job.org/en/members/jobs/`), edito o job, e pronto — não precisa mexer em nada aqui no repositório.
+
+### 7. Aviso no WhatsApp quando alguma automação falha
+
+Antes disso eu só descobria que algo tinha quebrado se entrasse manualmente no GitHub Actions ou percebesse que um relatório não chegou no Drive. Agora, se um dos 4 workflows falhar depois de esgotar todas as tentativas, chega um aviso direto no meu WhatsApp com o nome da automação e o link da execução.
+
+Uso o **CallMeBot**, que é grátis mas só serve pra mandar mensagem pra mim mesmo (não dá — e nem devia — pra usar isso pra avisar cliente). Configuração:
+
+1. Adicionei o número deles nos meus contatos (o número certo muda de vez em quando, então sempre confiro em [callmebot.com/whatsapp](https://www.callmebot.com/whatsapp/) antes de ativar de novo).
+2. Mandei pra esse contato, pelo WhatsApp: `I allow callmebot to send me messages`.
+3. Em menos de 2 minutos o bot respondeu com a minha apikey.
+4. Cadastrei `CALLMEBOT_PHONE` (meu número, com código do país, sem `+`) e `CALLMEBOT_APIKEY` (a chave que recebi) como Secrets do repositório.
+
+Cada workflow tem um último passo (`Notificar falha no WhatsApp`), com `if: failure()`, que só roda quando a automação falhou de vez (depois de esgotar as retentativas) — não manda nada em execução bem-sucedida, senão viraria spam (principalmente o Tableau, que roda até 11x por dia). Se algum dia eu quiser trocar o WhatsApp por e-mail/Telegram/Slack, é só trocar esse passo em cada `.yml` — o resto do workflow não muda.
 
 Se um dia eu quiser voltar a usar só o `schedule:` do GitHub (por exemplo, se abandonar o cron-job.org), é só descomentar o bloco no `.yml` correspondente e desativar o job lá no painel deles, pra não disparar duas vezes.
