@@ -786,6 +786,13 @@ class RedeServiceBot:
         WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
 
+        # Espera o pós-login terminar de verdade (sair da tela de login)
+        # antes de navegar. Sem isso, se o redirecionamento demorar um
+        # pouco mais (o site mudou o frontend, pode ter ficado mais lento),
+        # a navegação seguinte roda ainda em cima da tela de login e nada
+        # do que vem depois encontra o que precisa.
+        WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
+
         self.abrir_pagina_importacao(via_menu=True)
         print("✅ Logado e na página de Importação.")
 
@@ -825,6 +832,19 @@ class RedeServiceBot:
 
         print("⚠️ Não consegui abrir a Importação pelo menu; navegando direto pela URL...")
         self.driver.get(self.URL_IMPORTACAO)
+
+        if self._esta_na_tela_login():
+            # A navegação direta também pode cair na tela de login (sessão
+            # não confirmada a tempo, ou o servidor exige login de novo).
+            # Refaz o login aqui mesmo, sem chamar login_and_navigate() de
+            # volta (evita recursão) — depois tenta a URL direta outra vez.
+            print("⚠️ Navegação direta caiu na tela de login; refazendo login...")
+            WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
+            WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
+            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
+            WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
+            self.driver.get(self.URL_IMPORTACAO)
+
         self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
         # Navegação direta pula o roteamento da SPA: o botão já aparece no DOM,
         # mas o binding de eventos do Angular pode levar um instante a mais
