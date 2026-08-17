@@ -127,9 +127,9 @@ Isso dispara o workflow quase instantaneamente, sem cair na fila do `schedule:`.
 
 Pra mudar um horário: entro direto no painel do cron-job.org (`cron-job.org/en/members/jobs/`), edito o job, e pronto — não precisa mexer em nada aqui no repositório.
 
-### 7. Aviso no WhatsApp quando alguma automação falha
+### 7. Aviso no WhatsApp de sucesso e de falha
 
-Antes disso eu só descobria que algo tinha quebrado se entrasse manualmente no GitHub Actions ou percebesse que um relatório não chegou no Drive. Agora, se um dos 4 workflows falhar depois de esgotar todas as tentativas, chega um aviso direto no meu WhatsApp com o nome da automação e o link da execução.
+Antes disso eu só descobria que algo tinha quebrado (ou funcionado) se entrasse manualmente no GitHub Actions ou percebesse que um relatório chegou ou não no Drive. Agora chega aviso direto no meu WhatsApp nos dois casos.
 
 Uso o **CallMeBot**, que é grátis mas só serve pra mandar mensagem pra mim mesmo (não dá — e nem devia — pra usar isso pra avisar cliente). Configuração:
 
@@ -138,7 +138,12 @@ Uso o **CallMeBot**, que é grátis mas só serve pra mandar mensagem pra mim me
 3. Em menos de 2 minutos o bot respondeu com a minha apikey.
 4. Cadastrei `CALLMEBOT_PHONE` (meu número, com código do país, sem `+`) e `CALLMEBOT_APIKEY` (a chave que recebi) como Secrets do repositório.
 
-Cada workflow tem um último passo (`Notificar falha no WhatsApp`), com `if: failure()`, que só roda quando a automação falhou de vez (depois de esgotar as retentativas) — não manda nada em execução bem-sucedida, senão viraria spam (principalmente o Tableau, que roda até 11x por dia). Se algum dia eu quiser trocar o WhatsApp por e-mail/Telegram/Slack, é só trocar esse passo em cada `.yml` — o resto do workflow não muda.
+Cada workflow tem dois passos de notificação no final:
+
+- **`Notificar sucesso no WhatsApp`** (`if: success()`) — Gerar Perfil, EVO e PBI mandam essa mensagem em toda execução bem-sucedida, já que rodam só 1x por dia cada. **O Tableau é diferente**: como ele roda até 11x por dia (de hora em hora, 08h-18h), notificar em toda execução viraria spam — então esse passo confere a hora atual em BRT e só manda a mensagem se for **08h** (a primeira execução do dia); nas outras 10 execuções ele pula silenciosamente.
+- **`Notificar falha no WhatsApp`** (`if: failure()`) — roda quando a automação falha de vez, depois de esgotar as retentativas, em qualquer horário (uma falha às 15h do Tableau também avisa, não só a das 8h).
+
+Se algum dia eu quiser trocar o WhatsApp por e-mail/Telegram/Slack, é só trocar esses passos em cada `.yml` — o resto do workflow não muda.
 
 **Pegadinha que me pegou na hora de ativar**: o `CALLMEBOT_PHONE` precisa ser **exatamente** o número que mandou a mensagem de ativação pro bot — mesma quantidade de dígitos, sem um `9` a mais nem a menos. Se o número no secret não bater direitinho com o que o CallMeBot tem cadastrado pra aquela apikey, ele responde `APIKey is invalid` mesmo com a apikey certa (a mensagem de erro engana, parece problema na apikey, mas era o telefone). Testei end-to-end forçando uma falha proposital numa branch descartável e só validei o `CALLMEBOT_APIKEY` como certo depois de ajustar o número — se acontecer nível "chega no log como sucesso mas não chega no WhatsApp", o primeiro lugar a olhar é a resposta que o CallMeBot devolve (dá pra adicionar um `echo` temporário no passo pra ver o corpo da resposta, foi assim que descobri).
 

@@ -67,6 +67,21 @@ jobs:
           path: tableau-agendamentos/downloads/**
           if-no-files-found: ignore
 
+      - name: Notificar sucesso no WhatsApp (só na 1ª execução do dia, 08h BRT)
+        if: success()
+        run: |
+          HORA_BRT=$(TZ="America/Sao_Paulo" date +%H)
+          if [ "$HORA_BRT" != "08" ]; then
+            echo "Não é a primeira execução do dia (hora atual: ${HORA_BRT}h BRT) — pulando notificação de sucesso, senão vira spam a cada hora."
+            exit 0
+          fi
+          MSG="✅ ${{ github.workflow }} atualizado (primeira execução do dia)."
+          curl -sS -G "https://api.callmebot.com/whatsapp.php" \
+            --data-urlencode "phone=${{ secrets.CALLMEBOT_PHONE }}" \
+            --data-urlencode "apikey=${{ secrets.CALLMEBOT_APIKEY }}" \
+            --data-urlencode "text=$MSG" \
+            || echo "Aviso: falha ao enviar notificação no WhatsApp (não interrompe o workflow)."
+
       - name: Notificar falha no WhatsApp
         if: failure()
         run: |
