@@ -905,6 +905,23 @@ class RedeServiceBot:
         if not is_first:
             self.abrir_pagina_importacao()
 
+        # Lê o topo da grade AGORA, antes de abrir o modal — já estamos na
+        # página da grade (abrir_pagina_importacao/_abrir_modal_novo exigem
+        # isso), então não precisa navegar. Ler isso depois do Enviar, com
+        # um driver.get(), foi o que coincidiu com a sessão sendo derrubada
+        # (sessaoInvalida=1) em produção: funcionava antes dessa checagem
+        # existir, e passou a falhar sempre depois que ela passou a navegar
+        # logo após o Enviar. "Novo" abre um modal por cima da própria
+        # grade — não precisa de reload nenhum pra ler ela.
+        FILENAME_SELECTOR = "td.grid-cell[data-name='log_arquivo']"
+        try:
+            celulas = WebDriverWait(self.driver, 15).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, FILENAME_SELECTOR))
+            )
+            topo_antes = celulas[0].text.strip() if celulas else None
+        except Exception:
+            topo_antes = None
+
         self._abrir_modal_novo()
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlcliente")))).select_by_value("000003")
@@ -915,51 +932,12 @@ class RedeServiceBot:
         time.sleep(10)
 
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "btnEnviar"))))
-        print(f"📤 Clique em Enviar (Layout {layout_value}) feito; aguardando o navegador assentar...")
-        # Logo após o clique o navegador pode ainda estar ocupado
-        # processando/enviando o arquivo (arquivos grandes chegam a levar
-        # minutos pra concluir no RedeService). Navegar cedo demais pra
-        # conferir o histórico já travou o próprio comando do Selenium
-        # (timeout na conexão local com o chromedriver, nada a ver com o
-        # RedeService) — esse respiro reduz a chance disso acontecer.
-        time.sleep(8)
+        print(f"📤 Clique em Enviar (Layout {layout_value}) feito; confirmando no histórico do RedeService...")
 
-        self._confirmar_importacao_no_grid(caminho_csv.name)
+        self._confirmar_importacao_no_grid(caminho_csv.name, topo_antes, FILENAME_SELECTOR)
         print(f"🚀 Importação (Layout {layout_value}) confirmada no histórico do RedeService!")
 
-    def _ler_topo_da_grade(self, seletor: str):
-        """Navega pra grade de histórico e lê o nome do arquivo na linha do topo."""
-        self.driver.get(self.URL_IMPORTACAO)
-        if self._esta_na_tela_login():
-            self._fazer_login()
-            self.driver.get(self.URL_IMPORTACAO)
-            if "sessaoInvalida" in self.driver.current_url:
-                # Confirmado em produção: a URL vira ".../Login?sessaoInvalida=1"
-                # quando o RedeService derruba a sessão porque o mesmo usuário
-                # logou em outro lugar ao mesmo tempo (ex: alguém aberto no
-                # navegador comum com o mesmo login do robô). Refazer login de
-                # novo não resolve — se tiver outra sessão concorrente ativa,
-                # ela some de novo. Falha na hora em vez de gastar o orçamento
-                # inteiro tentando de novo à toa.
-                raise SessaoInvalidadaError(
-                    "O RedeService derrubou a sessão do robô (sessaoInvalida=1) — o login "
-                    f"({RS_LOGIN}) provavelmente está sendo usado em outro lugar ao mesmo "
-                    "tempo (ex: alguém logado no navegador comum). Não adianta tentar de novo "
-                    "sem resolver isso — o robô precisa de um login dedicado no RedeService."
-                )
-        # Mesmo caso da navegação direta em abrir_pagina_importacao(): pular
-        # o roteamento da SPA faz o binding de eventos/dados do Angular
-        # (e o fetch da grade em si, via API) levarem mais tempo pra
-        # terminar do que o simples "elemento presente no DOM" garante.
-        # Sem esse respiro, a espera abaixo estourava (TimeoutException
-        # com mensagem vazia) mesmo com a sessão autenticada e estável.
-        time.sleep(3)
-        celulas = WebDriverWait(self.driver, 30).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, seletor))
-        )
-        return celulas[0].text.strip() if celulas else None
-
-    def _confirmar_importacao_no_grid(self, nome_arquivo: str, timeout: int = 210, intervalo: int = 8):
+    def _confirmar_importacao_no_grid(self, nome_arquivo: str, topo_antes, seletor: str, timeout: int = 180, intervalo: int = 8):
         """
         O RedeService não mostra NENHUMA confirmação na tela depois de
         clicar em "Enviar" (nem toast, nem alerta) — confirmado com o
@@ -967,43 +945,59 @@ class RedeServiceBot:
         forma de saber se a importação foi aceita de verdade é a mesma que
         o usuário usa: conferir se surge uma linha nova, no topo da grade
         de histórico (ordenada da mais recente pra mais antiga), com o
-        nome do arquivo que acabou de subir — célula
-        `td.grid-cell[data-name='log_arquivo']` na tela de Importação.
+        nome do arquivo que acabou de subir.
 
-        Sem essa checagem, o script clicava em "Enviar" e já dava a
-        importação como sucesso mesmo quando o RedeService não processava
-        nada — era exatamente esse o bug reportado.
-
-        Cada navegação pra grade é protegida por try/except: um soluço
-        pontual do WebDriver (ex: ReadTimeoutError por o navegador ainda
-        estar ocupado com o upload) só consome uma rodada do orçamento de
-        tempo, em vez de derrubar a importação inteira.
+        IMPORTANTE: não navega (driver.get) enquanto a página atual ainda
+        mostrar a grade — "Enviar" fecha um modal por cima da própria
+        grade, então ela já deve estar visível ali mesmo, sem reload. Um
+        reload logo depois do Enviar foi tentado antes e coincidiu, de
+        forma consistente, com a sessão do robô sendo derrubada pelo
+        RedeService (sessaoInvalida=1) — só recorre a um driver.get() como
+        recuperação, depois de algumas tentativas falhando na página atual.
         """
-        FILENAME_SELECTOR = "td.grid-cell[data-name='log_arquivo']"
         fim = time.time() + timeout
-
-        topo_antes = None
-        while topo_antes is None and time.time() < fim:
-            try:
-                topo_antes = self._ler_topo_da_grade(FILENAME_SELECTOR)
-            except SessaoInvalidadaError:
-                raise
-            except Exception as e:
-                print(f"⚠️ Não consegui ler a grade de histórico ainda ({e}); tentando de novo...")
-                time.sleep(intervalo)
-
         topo_depois = topo_antes
+        tentativas_sem_navegar = 0
+
         while time.time() < fim:
-            time.sleep(intervalo)
             try:
-                topo_depois = self._ler_topo_da_grade(FILENAME_SELECTOR)
-            except SessaoInvalidadaError:
-                raise
-            except Exception as e:
-                print(f"⚠️ Não consegui ler a grade de histórico ainda ({e}); tentando de novo...")
-                continue
+                celulas = WebDriverWait(self.driver, 12).until(
+                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, seletor))
+                )
+                topo_depois = celulas[0].text.strip() if celulas else None
+            except Exception:
+                topo_depois = None
+
             if topo_depois == nome_arquivo and topo_depois != topo_antes:
                 return
+
+            tentativas_sem_navegar += 1
+            if tentativas_sem_navegar >= 3:
+                # A página atual não tem a grade — tenta recuperar com um
+                # reload explícito.
+                try:
+                    self.driver.get(self.URL_IMPORTACAO)
+                    if self._esta_na_tela_login():
+                        self._fazer_login()
+                        if "sessaoInvalida" in self.driver.current_url:
+                            # Confirmado em produção: a URL vira
+                            # ".../Login?sessaoInvalida=1" quando o
+                            # RedeService derruba a sessão do robô.
+                            raise SessaoInvalidadaError(
+                                "O RedeService derrubou a sessão do robô (sessaoInvalida=1) ao "
+                                f"tentar confirmar a importação de '{nome_arquivo}'. Login usado: "
+                                f"{RS_LOGIN}."
+                            )
+                        self.driver.get(self.URL_IMPORTACAO)
+                    time.sleep(3)
+                except SessaoInvalidadaError:
+                    raise
+                except Exception as e:
+                    print(f"⚠️ Reload de recuperação da grade falhou ({e}); tentando de novo...")
+                tentativas_sem_navegar = 0
+
+            time.sleep(intervalo)
+
         raise RuntimeError(
             f"'{nome_arquivo}' não apareceu como linha nova no topo do histórico de Importação do "
             f"RedeService depois de {timeout}s (topo da grade continua sendo '{topo_depois}'). "
