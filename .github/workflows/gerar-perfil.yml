@@ -67,8 +67,7 @@ jobs:
         if: success()
         working-directory: ${{ github.workspace }}
         run: |
-          python3 scripts/atualizar_status.py gerar_perfil sucesso
-          bash scripts/commit_status.sh
+          bash scripts/commit_status.sh gerar_perfil sucesso
 
       - name: Notificar falha no WhatsApp
         if: failure()
@@ -84,5 +83,4 @@ jobs:
         if: failure()
         working-directory: ${{ github.workspace }}
         run: |
-          python3 scripts/atualizar_status.py gerar_perfil falha
-          bash scripts/commit_status.sh
+          bash scripts/commit_status.sh gerar_perfil falha

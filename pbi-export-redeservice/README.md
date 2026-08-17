@@ -16,7 +16,13 @@ Exporta 3 relatórios do Power BI (Inadimplência, Relacionamento, Vendas), conv
 ## ⚠️ Pontos de atenção
 
 1. **Login Microsoft/MFA**: o login do Power BI passa pela tela da Microsoft. Se a conta tiver MFA ativo, a automação trava em modo headless — veja o README da raiz.
-2. **Conversão xlsx → csv sem Excel**: a versão original abria o Microsoft Excel de verdade (`win32com`) para salvar o CSV, que por padrão regional (pt-BR) usa `;` como separador e `cp1252` (ANSI/Windows-1252) como encoding — já reproduzido em `pbi_export.py` (constantes `CSV_DELIMITER`/`CSV_ENCODING`). Isso sozinho não foi suficiente: mesmo com `cp1252`, a base de Inadimplência continuou sendo rejeitada pelo backend com o mesmo erro de SQL (`LEFT`/`SUBSTRING`). Causa mais provável: `openpyxl` entrega datas/números como objetos Python "crus" (ex: `2026-08-13 00:00:00`, `1234.5`), e escrever isso direto no CSV não é o que o Excel real geraria (`13/08/2026`, `1234,5`) — o backend espera esse formato de largura fixa. `FileProcessor._valor_csv()` agora formata datas como `DD/MM/AAAA` e números decimais com vírgula antes de escrever no CSV. **Sempre confira o histórico de importação dentro do RedeService**, não só o log do script: o upload pode aparecer como "sucesso" no script mesmo quando o backend rejeita o arquivo de forma assíncrona.
+2. **Conversão xlsx → csv sem Excel** (a parte mais escorregadia desse script). A versão original abria o Microsoft Excel de verdade (`win32com`, `SaveAs FileFormat=6`). O ponto que me custou três tentativas: o Excel **não grava o valor cru da célula no CSV — ele grava o valor JÁ FORMATADO, do jeito que aparece na tela**, segundo o `number_format` daquela célula. O `openpyxl` entrega o valor cru, e é aí que quebra.
+
+   O caso concreto: a coluna **"Data filiação"** tem `number_format = mm-dd-yy`. O Excel gravava `08-17-26` (mês-dia-ano, com **traço**). Escrevendo o valor cru vira `17/08/2026 09:23:45` — sem traço nenhum. A procedure do RedeService fatia essa data procurando o traço, o `CHARINDEX` volta 0, o length vira -1 e estoura `Invalid length parameter passed to the LEFT or SUBSTRING function`. Mesma história nas colunas de dinheiro (`"R$"\ #,##0.00`): o Excel gravava `R$ 1.234,50`, o valor cru era `1234.5`.
+
+   Por isso `FileProcessor._valor_csv()` recebe a **célula** (não só o valor) e renderiza respeitando o `number_format`, via `_render_data()` e `_render_numero()`. Se alguma coluna nova sair errada na importação, é aí que se mexe.
+
+   **Sempre confira o histórico de importação dentro do RedeService**, não só o log do script: o upload aparece como "sucesso" no script mesmo quando o backend rejeita o arquivo depois, de forma assíncrona.
 
 ## Rodar localmente (opcional, para testar)
 

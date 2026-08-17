@@ -81,8 +81,7 @@ jobs:
         if: success()
         working-directory: ${{ github.workspace }}
         run: |
-          python3 scripts/atualizar_status.py evo sucesso
-          bash scripts/commit_status.sh
+          bash scripts/commit_status.sh evo sucesso
 
       - name: Notificar falha no WhatsApp
         if: failure()
@@ -98,5 +97,4 @@ jobs:
         if: failure()
         working-directory: ${{ github.workspace }}
         run: |
-          python3 scripts/atualizar_status.py evo falha
-          bash scripts/commit_status.sh
+          bash scripts/commit_status.sh evo falha
