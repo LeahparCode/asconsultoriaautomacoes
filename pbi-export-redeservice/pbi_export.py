@@ -905,12 +905,30 @@ class RedeServiceBot:
         time.sleep(10)
 
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "btnEnviar"))))
-        print(f"📤 Clique em Enviar (Layout {layout_value}) feito; confirmando no histórico do RedeService...")
+        print(f"📤 Clique em Enviar (Layout {layout_value}) feito; aguardando o navegador assentar...")
+        # Logo após o clique o navegador pode ainda estar ocupado
+        # processando/enviando o arquivo (arquivos grandes chegam a levar
+        # minutos pra concluir no RedeService). Navegar cedo demais pra
+        # conferir o histórico já travou o próprio comando do Selenium
+        # (timeout na conexão local com o chromedriver, nada a ver com o
+        # RedeService) — esse respiro reduz a chance disso acontecer.
+        time.sleep(8)
 
         self._confirmar_importacao_no_grid(caminho_csv.name)
         print(f"🚀 Importação (Layout {layout_value}) confirmada no histórico do RedeService!")
 
-    def _confirmar_importacao_no_grid(self, nome_arquivo: str, timeout: int = 90, intervalo: int = 5):
+    def _ler_topo_da_grade(self, seletor: str):
+        """Navega pra grade de histórico e lê o nome do arquivo na linha do topo."""
+        self.driver.get(self.URL_IMPORTACAO)
+        if self._esta_na_tela_login():
+            self._fazer_login()
+            self.driver.get(self.URL_IMPORTACAO)
+        celulas = WebDriverWait(self.driver, 15).until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, seletor))
+        )
+        return celulas[0].text.strip() if celulas else None
+
+    def _confirmar_importacao_no_grid(self, nome_arquivo: str, timeout: int = 150, intervalo: int = 8):
         """
         O RedeService não mostra NENHUMA confirmação na tela depois de
         clicar em "Enviar" (nem toast, nem alerta) — confirmado com o
@@ -924,27 +942,31 @@ class RedeServiceBot:
         Sem essa checagem, o script clicava em "Enviar" e já dava a
         importação como sucesso mesmo quando o RedeService não processava
         nada — era exatamente esse o bug reportado.
+
+        Cada navegação pra grade é protegida por try/except: um soluço
+        pontual do WebDriver (ex: ReadTimeoutError por o navegador ainda
+        estar ocupado com o upload) só consome uma rodada do orçamento de
+        tempo, em vez de derrubar a importação inteira.
         """
         FILENAME_SELECTOR = "td.grid-cell[data-name='log_arquivo']"
-
-        self.driver.get(self.URL_IMPORTACAO)
-        if self._esta_na_tela_login():
-            self._fazer_login()
-            self.driver.get(self.URL_IMPORTACAO)
-        celulas = WebDriverWait(self.driver, 15).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, FILENAME_SELECTOR))
-        )
-        topo_antes = celulas[0].text.strip() if celulas else None
-
         fim = time.time() + timeout
+
+        topo_antes = None
+        while topo_antes is None and time.time() < fim:
+            try:
+                topo_antes = self._ler_topo_da_grade(FILENAME_SELECTOR)
+            except Exception as e:
+                print(f"⚠️ Não consegui ler a grade de histórico ainda ({e}); tentando de novo...")
+                time.sleep(intervalo)
+
         topo_depois = topo_antes
         while time.time() < fim:
             time.sleep(intervalo)
-            self.driver.get(self.URL_IMPORTACAO)
-            celulas = WebDriverWait(self.driver, 15).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, FILENAME_SELECTOR))
-            )
-            topo_depois = celulas[0].text.strip() if celulas else None
+            try:
+                topo_depois = self._ler_topo_da_grade(FILENAME_SELECTOR)
+            except Exception as e:
+                print(f"⚠️ Não consegui ler a grade de histórico ainda ({e}); tentando de novo...")
+                continue
             if topo_depois == nome_arquivo and topo_depois != topo_antes:
                 return
         raise RuntimeError(
