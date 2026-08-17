@@ -1092,6 +1092,18 @@ def main():
             with open(nome_print.replace(".png", ".html"), "w", encoding="utf-8") as f:
                 f.write(driver_rs.page_source)
             print(f"HTML da página salvo em: {os.path.abspath(nome_print.replace('.png', '.html'))}")
+            # O artefato de diagnóstico (screenshot/HTML) nem sempre está
+            # acessível pra download depois (proxy/rede pode bloquear o
+            # blob storage). Imprime o essencial direto no log do job,
+            # que é sempre legível pela API do GitHub.
+            print(f"URL no momento do erro: {driver_rs.current_url}")
+            print("--- Texto visível da página no momento do erro (até 3000 chars) ---")
+            try:
+                texto_pagina = driver_rs.find_element(By.TAG_NAME, "body").text
+            except Exception:
+                texto_pagina = "(não consegui ler o texto do <body>)"
+            print(texto_pagina[:3000])
+            print("--- Fim do texto visível ---")
         except Exception as e2:
             print(f"Não consegui salvar screenshot/HTML de diagnóstico: {e2}")
         raise
