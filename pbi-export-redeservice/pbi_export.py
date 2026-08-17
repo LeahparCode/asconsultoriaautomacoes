@@ -770,6 +770,10 @@ class PowerBIBot:
 # ==========================================
 # AUTOMAÇÃO: REDE SERVICE
 # ==========================================
+class SessaoInvalidadaError(RuntimeError):
+    """O RedeService derrubou a sessão do robô (login duplicado em outro lugar)."""
+
+
 class RedeServiceBot:
     # A página de Importação é alcançável direto por URL — o próprio fluxo já
     # usa esse mesmo href para voltar entre uma base e outra.
@@ -929,6 +933,20 @@ class RedeServiceBot:
         if self._esta_na_tela_login():
             self._fazer_login()
             self.driver.get(self.URL_IMPORTACAO)
+            if "sessaoInvalida" in self.driver.current_url:
+                # Confirmado em produção: a URL vira ".../Login?sessaoInvalida=1"
+                # quando o RedeService derruba a sessão porque o mesmo usuário
+                # logou em outro lugar ao mesmo tempo (ex: alguém aberto no
+                # navegador comum com o mesmo login do robô). Refazer login de
+                # novo não resolve — se tiver outra sessão concorrente ativa,
+                # ela some de novo. Falha na hora em vez de gastar o orçamento
+                # inteiro tentando de novo à toa.
+                raise SessaoInvalidadaError(
+                    "O RedeService derrubou a sessão do robô (sessaoInvalida=1) — o login "
+                    f"({RS_LOGIN}) provavelmente está sendo usado em outro lugar ao mesmo "
+                    "tempo (ex: alguém logado no navegador comum). Não adianta tentar de novo "
+                    "sem resolver isso — o robô precisa de um login dedicado no RedeService."
+                )
         # Mesmo caso da navegação direta em abrir_pagina_importacao(): pular
         # o roteamento da SPA faz o binding de eventos/dados do Angular
         # (e o fetch da grade em si, via API) levarem mais tempo pra
@@ -968,6 +986,8 @@ class RedeServiceBot:
         while topo_antes is None and time.time() < fim:
             try:
                 topo_antes = self._ler_topo_da_grade(FILENAME_SELECTOR)
+            except SessaoInvalidadaError:
+                raise
             except Exception as e:
                 print(f"⚠️ Não consegui ler a grade de histórico ainda ({e}); tentando de novo...")
                 time.sleep(intervalo)
@@ -977,6 +997,8 @@ class RedeServiceBot:
             time.sleep(intervalo)
             try:
                 topo_depois = self._ler_topo_da_grade(FILENAME_SELECTOR)
+            except SessaoInvalidadaError:
+                raise
             except Exception as e:
                 print(f"⚠️ Não consegui ler a grade de histórico ainda ({e}); tentando de novo...")
                 continue
