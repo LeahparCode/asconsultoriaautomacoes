@@ -46,8 +46,9 @@ jobs:
           GDRIVE_OAUTH_CLIENT_ID: ${{ secrets.GDRIVE_OAUTH_CLIENT_ID }}
           GDRIVE_OAUTH_CLIENT_SECRET: ${{ secrets.GDRIVE_OAUTH_CLIENT_SECRET }}
           GDRIVE_OAUTH_REFRESH_TOKEN: ${{ secrets.GDRIVE_OAUTH_REFRESH_TOKEN }}
+          PBI_SOMENTE_DIAGNOSTICO: "1"
         run: |
-          MAX_TENTATIVAS=3
+          MAX_TENTATIVAS=1
           ESPERA_ERRO=300
           tentativa=1
           while [ "$tentativa" -le "$MAX_TENTATIVAS" ]; do

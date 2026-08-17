@@ -211,6 +211,32 @@ class FileProcessor:
         caminho_csv = caminho_xlsx.with_suffix(".csv")
         print(f"📄 Convertendo para CSV (delimitador '{CSV_DELIMITER}')...")
 
+        # === DIAGNÓSTICO TEMPORÁRIO (branch diag/pbi-csv) ===
+        # Mostra o FORMATO de cada campo sem expor dado de cliente: dígitos
+        # viram '#', letras viram 'A'. Serve pra descobrir por que o
+        # RedeService rejeita esse CSV com erro de LEFT/SUBSTRING.
+        import re as _re
+
+        def _mascarar(texto):
+            texto = str(texto)
+            texto = _re.sub(r"\d", "#", texto)
+            texto = _re.sub(r"[A-Za-zÀ-ÿ]", "A", texto)
+            return texto
+
+        print("\n===== DIAGNÓSTICO: estrutura das colunas (linha 2) =====")
+        print(f"ws.max_column = {ws.max_column} | ws.max_row = {ws.max_row} | LINHA_FIM = {LINHA_FIM}")
+        cabecalhos = [c.value for c in ws[1]]
+        for idx, cell in enumerate(ws[2], start=1):
+            cab = cabecalhos[idx - 1] if idx - 1 < len(cabecalhos) else "(sem cabeçalho)"
+            bruto = cell.value
+            convertido = FileProcessor._valor_csv(bruto)
+            print(
+                f"col {idx:>2} | cab={str(cab)[:28]:<28} | tipo={type(bruto).__name__:<9} "
+                f"| fmt={str(cell.number_format)[:18]:<18} | bruto={_mascarar(bruto)[:26]:<26} "
+                f"| vira={_mascarar(convertido)[:26]}"
+            )
+        print("===== FIM DIAGNÓSTICO =====\n")
+
         with open(caminho_csv, "w", newline="", encoding=CSV_ENCODING) as f:
             writer = csv.writer(f, delimiter=CSV_DELIMITER)
             for row in ws.iter_rows(min_row=1, max_row=LINHA_FIM):
@@ -218,6 +244,16 @@ class FileProcessor:
 
         wb.close()
         print(f"✅ CSV gerado: {caminho_csv.name}")
+
+        # Primeiras 2 linhas do CSV final, em bytes mascarados — mostra
+        # encoding, delimitador, aspas e fim de linha exatos.
+        with open(caminho_csv, "rb") as f:
+            bruto_bytes = f.read(1400)
+        print("===== DIAGNÓSTICO: primeiros bytes do CSV (mascarado) =====")
+        for linha_csv in bruto_bytes.split(b"\r\n")[:2]:
+            texto = linha_csv.decode(CSV_ENCODING, errors="replace")
+            print(repr(_mascarar(texto)[:600]))
+        print("===== FIM DIAGNÓSTICO =====\n")
 
         contagem = max(0, LINHA_FIM - LINHA_INICIO + 1)
         return caminho_csv, contagem
@@ -930,6 +966,13 @@ def main():
     finally:
         print("Fechando navegador do PBI...")
         driver_pbi.quit()
+
+    # === DIAGNÓSTICO TEMPORÁRIO (branch diag/pbi-csv) ===
+    # Para aqui, antes de importar no RedeService, pra não registrar mais uma
+    # importação falha no histórico deles enquanto eu só quero ver o CSV.
+    if os.environ.get("PBI_SOMENTE_DIAGNOSTICO") == "1":
+        print("\n🔬 PBI_SOMENTE_DIAGNOSTICO=1 — parando antes da importação no RedeService.")
+        return
 
     # Backup no Google Drive dos arquivos extraídos (best-effort). Direto na
     # pasta de destino, sem subpasta por data — se já existir um arquivo com
