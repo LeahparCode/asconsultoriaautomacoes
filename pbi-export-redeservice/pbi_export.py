@@ -911,6 +911,22 @@ class RedeServiceBot:
             print(f"   (não consegui listar os selects: {e})")
 
     def _upload_dropzone(self, caminho_csv: Path):
+        """
+        Entrega o arquivo ao Dropzone de verdade.
+
+        CAUSA RAIZ do "importa mas não importa": escrever o caminho no
+        <input type="file"> escondido faz o arquivo chegar no input, mas o
+        Dropzone (biblioteca JS) NÃO fica sabendo — ele não lê o input, ele
+        reage a eventos. Resultado: o script achava que tinha subido o
+        arquivo, o RedeService recebia o formulário vazio e respondia
+        "Informe o(s) arquivo(s) para importação!" (confirmado no log, no
+        texto da página depois do Enviar), sem nada ser importado.
+
+        A correção é disparar o evento 'change' no input depois do
+        send_keys, e — para o caso do Dropzone só escutar drag-and-drop —
+        também despachar um evento 'drop' sintético com o arquivo no
+        dataTransfer.
+        """
         self.driver.execute_script("""
             document.querySelectorAll('.dropzone input[type="file"], input.dz-hidden-input').forEach(function(el) {
                 el.style.display = 'block'; el.style.opacity = '1'; el.style.position = 'relative'; el.style.width = '1px'; el.style.height = '1px';
@@ -918,7 +934,36 @@ class RedeServiceBot:
         """)
         file_input = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.dropzone input[type="file"], input.dz-hidden-input')))
         file_input.send_keys(str(caminho_csv.resolve()))
-        print(f"✅ Arquivo carregado no Dropzone: {caminho_csv.name}")
+
+        # Sem isso o Dropzone ignora o arquivo (ver docstring).
+        self.driver.execute_script("""
+            var input = arguments[0];
+            input.dispatchEvent(new Event('change', {bubbles: true}));
+
+            // Se o Dropzone só escuta drop, replica o arrastar-e-soltar
+            // usando os arquivos que já estão no input.
+            var zona = document.querySelector('.dropzone');
+            if (zona && input.files && input.files.length) {
+                var dt = new DataTransfer();
+                for (var i = 0; i < input.files.length; i++) { dt.items.add(input.files[i]); }
+                ['dragenter', 'dragover', 'drop'].forEach(function (nome) {
+                    var ev = new DragEvent(nome, {bubbles: true, cancelable: true, dataTransfer: dt});
+                    zona.dispatchEvent(ev);
+                });
+            }
+        """, file_input)
+        print(f"📎 Arquivo entregue ao Dropzone: {caminho_csv.name}")
+
+        # Confirma que o Dropzone realmente registrou o arquivo (ele mostra o
+        # nome na tela quando aceita). Sem essa checagem voltamos a "achar"
+        # que subiu.
+        try:
+            WebDriverWait(self.driver, 30).until(
+                lambda d: caminho_csv.name in d.find_element(By.TAG_NAME, "body").text
+            )
+            print("✅ Dropzone confirmou o arquivo na tela.")
+        except TimeoutException:
+            print("⚠️ O nome do arquivo NÃO apareceu na tela — o Dropzone pode não ter aceitado.")
 
     # Unidade "AGIL SOLUÇÕES INTEGRADAS", conforme o passo a passo do usuário.
     # No modal antigo ela já vinha marcada por padrão (selected="selected"), por
@@ -1015,6 +1060,31 @@ class RedeServiceBot:
         print(f"📤 Enviar (Layout {layout_value}) clicado.")
         time.sleep(5)
         self._dump_texto_da_pagina("DEPOIS do Enviar")
+        self._conferir_rejeicao(layout_value)
+
+    # Mensagens de validação que o RedeService mostra quando recusa o envio.
+    # "Informe o(s) arquivo(s) para importação!" foi a que apareceu em
+    # produção enquanto o Dropzone não recebia o arquivo de verdade — e o
+    # script seguia dizendo "enviado com sucesso" por cima dela.
+    MENSAGENS_DE_REJEICAO = (
+        "Informe o(s) arquivo(s) para importação",
+        "campo obrigatório",
+        "Campo obrigatório",
+    )
+
+    def _conferir_rejeicao(self, layout_value: str):
+        """Falha se a tela mostrar mensagem de validação depois do Enviar."""
+        try:
+            texto = self.driver.find_element(By.TAG_NAME, "body").text
+        except Exception:
+            texto = ""
+        for msg in self.MENSAGENS_DE_REJEICAO:
+            if msg in texto:
+                raise RuntimeError(
+                    f"O RedeService recusou a importação (Layout {layout_value}): '{msg}'. "
+                    f"Nada foi importado."
+                )
+        print(f"🚀 Importação (Layout {layout_value}) enviada sem mensagem de recusa.")
 
 
 # ==========================================
