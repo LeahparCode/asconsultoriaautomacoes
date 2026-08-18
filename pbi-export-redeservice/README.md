@@ -15,36 +15,26 @@ Exporta 3 relatórios do Power BI (Inadimplência, Relacionamento, Vendas), conv
 
 ## ⚠️ Pontos de atenção
 
-1. **Login Microsoft/MFA**: o login do Power BI passa pela tela da Microsoft. Se a conta tiver MFA ativo, a automação trava em modo headless — veja o README da raiz.
-2. **Conversão xlsx → csv sem Excel** (a parte mais escorregadia desse script). A versão original abria o Microsoft Excel de verdade (`win32com`, `SaveAs FileFormat=6`), que grava data em **DD/MM/AAAA** e número decimal com **vírgula**. `FileProcessor._valor_csv()` reproduz exatamente isso.
+1. **Este script é o do usuário, portado.** Em 18/08/2026 o usuário trouxe uma versão do `pbi_export.py` que roda na máquina dele (Windows) e importa no RedeService sem problemas. Ela substituiu a versão anterior. A classe `RedeServiceBot` é **idêntica à do usuário**, de propósito: é a parte que funciona, e mexer nela já custou muito tempo. As adaptações pro GitHub Actions ficaram todas fora dela (credenciais por secrets, pasta de download, headless, conversão de CSV, Drive e contagens).
 
-   **ATENÇÃO — não mude esse formato sem confirmar no gestão.** Já tentei "melhorar" isso renderizando a data conforme o `number_format` de cada célula (a coluna "Data filiação" vem com formato `mm-dd-yy` no Excel) — o RedeService **não leu a base assim**; o formato certo, confirmado com o usuário direto no sistema, é DD/MM/AAAA com barra. Ver o comentário em `_valor_csv()` antes de mexer aqui de novo.
+2. **Login Microsoft/MFA**: o login do Power BI passa pela tela da Microsoft. Se a conta tiver MFA ativo, a automação trava em modo headless — veja o README da raiz.
 
-   **Sempre confira o histórico de importação dentro do RedeService**, não só o log do script: o upload aparece como "sucesso" no script mesmo quando o backend rejeita o arquivo depois, de forma assíncrona.
+3. **Conversão xlsx → csv sem Excel** — a única diferença real de comportamento em relação ao script do usuário. O original abre o Microsoft Excel de verdade (`win32com`, `SaveAs FileFormat=6`); os runners do GitHub não têm Office, então `FileProcessor.processar_planilha_inadimplencia()` faz a conversão com `openpyxl` + `csv.writer`, reproduzindo o mesmo resultado: delimitador `;`, encoding **cp1252** (ANSI, o padrão do "Salvar como CSV" do Excel em pt-BR — **não** utf-8) e data em **DD/MM/AAAA** com decimal por vírgula.
 
-3. **O formulário de importação é aberto direto por URL** (`.../cobranca.be.cartaotodos/Importacao/Incluir`), não clicando no botão "Novo". Depois de logado, essa URL já cai no formulário. O clique no "Novo" (`demo-btn-addrow`) era o passo mais problemático do fluxo — o botão ficava "clicável" antes do Angular terminar o binding, o modal não abria, e a recuperação disso acabava refazendo login no meio da importação. Ir direto pela URL pula tudo isso.
+   **ATENÇÃO — não mude esse formato sem confirmar no gestão.** Já se tentou renderizar a data conforme o `number_format` de cada célula (a coluna "Data filiação" vem como `mm-dd-yy`): o RedeService **não leu a base assim**. Ver o comentário em `_valor_csv()` antes de mexer.
 
-4. **A sessão do RedeService não sobrevive a uma importação — cada base loga do zero.** Observado de forma consistente em várias execuções: depois que uma importação é enviada, o servidor invalida a sessão do robô. A primeira base (que roda logo após o login) sempre passava; as seguintes, reaproveitando a mesma sessão, caíam na tela de login (`.../Home/Login?sessaoInvalida=1`). Em vez de tentar preservar uma sessão que o servidor já considera morta, `importar_base()` chama `login_limpo()` antes de cada base a partir da segunda — limpa cookies/storage e loga de novo, recriando a condição que comprovadamente funciona.
+   Se algum dia a importação da Inadimplência voltar a falhar e a de Relacionamento/Vendas (que sobem o `.xlsx` direto, sem conversão) continuar passando, **é aqui que se olha primeiro** — é o único ponto onde o arquivo gerado no runner difere do gerado na máquina do usuário.
 
-5. **O upload do arquivo é feito em Playwright, não em Selenium — e isso é proposital.** A etapa do Power BI (acima no arquivo) roda em Selenium; só a `RedeServiceBot` usa Playwright. O motivo é o upload.
+4. **O script não confirma se a importação foi aceita.** Depois de clicar em "Enviar" ele imprime "enviada com sucesso" e segue. O RedeService não mostra confirmação nenhuma na tela (nem manualmente aparece), então o script não tem como saber ali na hora se o backend aceitou. **Confira o histórico de Importação dentro do RedeService** pra ter certeza.
 
-   No Selenium era preciso escrever o caminho no `<input type="file">` escondido e depois **forjar eventos de JavaScript** (`change` e um `drop` sintético com `DataTransfer`) pra convencer o Dropzone de que um arquivo tinha sido solto ali. O Dropzone até aceitava e mostrava o nome na tela, mas o servidor devolvia **HTTP 500** (página genérica de erro do IIS) e nada era importado — enquanto o mesmo arquivo, subido manualmente pelo navegador, entrava normalmente.
-
-   `page.set_input_files()` anexa o arquivo pelo **protocolo nativo do navegador**, exatamente como um usuário escolhendo o arquivo na janela do sistema. Sem evento sintético nenhum. Se um dia alguém pensar em voltar essa parte pro Selenium: foi tentado, e é aqui que quebra.
-
-   O `_garantir_upload_concluido()` continua conferindo o status real na API do Dropzone (`files[].status`: `queued` → `uploading` → `success`/`error`) antes de clicar em Enviar, e `_conferir_rejeicao()` falha de verdade se a tela mostrar mensagem de recusa depois do envio.
-
-6. **O script não confirma se a importação foi realmente aceita.** Depois de clicar em "Enviar" ele imprime "enviada com sucesso" e segue — o RedeService não mostra confirmação nenhuma na tela (nem toast, nem alerta; nem manualmente aparece), então o script não tem como saber ali na hora se o backend aceitou o arquivo. **Confira o histórico de Importação dentro do RedeService** pra ter certeza.
-
-   Cheguei a implementar uma checagem que voltava na grade de histórico pra confirmar a linha nova, mas ela foi revertida (18/08/2026) a pedido do usuário: qualquer navegação (`driver.get`) dentro do fluxo de importação fazia o RedeService derrubar a sessão do robô (`.../Home/Login?sessaoInvalida=1`), quebrando importações que antes passavam. Se for tentar isso de novo, o ponto de partida é: **não navegar** — ler a grade da página atual, já que "Novo" abre um modal por cima dela — e ler por texto, porque o seletor `td.grid-cell[data-name="log_arquivo"]` nunca deu match apesar da grade estar populada.
+5. **Franquias**: Ilhéus foi removido de todos os relatórios (`FRANQUIAS` e `FRANQUIAS_VENDAS`), conforme a versão do usuário de 18/08/2026.
 
 ## Rodar localmente (opcional, para testar)
 
 ```bash
 pip install -r requirements.txt
 # Selenium 4.6+ baixa o chromedriver automaticamente (Selenium Manager),
-# só precisa ter o Google Chrome instalado na máquina (usado no Power BI).
-playwright install chromium   # usado na parte do RedeService
+# só precisa ter o Google Chrome instalado na máquina.
 PBI_LOGIN_EMAIL=... PBI_SENHA=... RS_LOGIN=2 RS_SENHA=... PBI_HEADLESS=false python pbi_export.py
 ```
 
