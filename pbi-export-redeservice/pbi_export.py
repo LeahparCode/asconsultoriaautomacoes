@@ -936,8 +936,12 @@ class RedeServiceBot:
         file_input.send_keys(str(caminho_csv.resolve()))
 
         # Sem isso o Dropzone ignora o arquivo (ver docstring).
+        # O input é re-consultado DENTRO do JS: passar a referência Python de
+        # volta pro script estourava StaleElementReferenceException, porque o
+        # Dropzone recria esse elemento assim que recebe o arquivo.
         self.driver.execute_script("""
-            var input = arguments[0];
+            var input = document.querySelector('.dropzone input[type="file"], input.dz-hidden-input');
+            if (!input) { return; }
             input.dispatchEvent(new Event('change', {bubbles: true}));
 
             // Se o Dropzone só escuta drop, replica o arrastar-e-soltar
@@ -951,7 +955,7 @@ class RedeServiceBot:
                     zona.dispatchEvent(ev);
                 });
             }
-        """, file_input)
+        """)
         print(f"📎 Arquivo entregue ao Dropzone: {caminho_csv.name}")
 
         # Confirma que o Dropzone realmente registrou o arquivo (ele mostra o
