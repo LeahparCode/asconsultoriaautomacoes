@@ -832,7 +832,25 @@ class RedeServiceBot:
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
         WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
 
-    def _select_quando_disponivel(self, select_id: str, value: str, timeout: int = 15):
+    def _selecionar(self, select_id: str, value: str):
+        """
+        Seleciona um <option> e dispara change/input explicitamente.
+
+        O select de Layout é populado quando os campos "pai" (Tipo de
+        Importação/Cliente) mudam. Nem sempre a seleção via Selenium faz o
+        framework da página perceber a mudança — sem o evento, o Layout
+        nunca chega a ser carregado e a espera por ele estoura.
+        """
+        el = self.wait.until(EC.element_to_be_clickable((By.ID, select_id)))
+        SeleniumSelect(el).select_by_value(value)
+        self.driver.execute_script(
+            "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));"
+            "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
+            el,
+        )
+        time.sleep(1)
+
+    def _select_quando_disponivel(self, select_id: str, value: str, timeout: int = 40):
         """
         Seleciona um <option> por value, esperando ele existir antes.
 
@@ -840,11 +858,36 @@ class RedeServiceBot:
         que um select "pai" (Tipo de Importação/Cliente) muda — selecionar
         direto pode disparar NoSuchElementException porque a opção ainda não
         chegou no DOM.
+
+        Se a opção não aparecer, despeja no log o que a página REALMENTE tem
+        (todos os selects e suas opções) antes de estourar: já perdi tempo
+        demais supondo o que estava na tela em vez de olhar.
         """
-        WebDriverWait(self.driver, timeout).until(
-            lambda d: d.find_elements(By.CSS_SELECTOR, f"#{select_id} option[value='{value}']")
-        )
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                lambda d: d.find_elements(By.CSS_SELECTOR, f"#{select_id} option[value='{value}']")
+            )
+        except TimeoutException:
+            self._dump_selects_da_pagina(select_id, value)
+            raise
         SeleniumSelect(self.driver.find_element(By.ID, select_id)).select_by_value(value)
+
+    def _dump_selects_da_pagina(self, select_id: str, value: str):
+        """Lista no log todos os <select> da página e suas opções (diagnóstico)."""
+        print(f"⚠️ A opção value='{value}' não apareceu em #{select_id}. Campos que a página tem agora:")
+        try:
+            print(f"   URL atual: {self.driver.current_url}")
+            for el in self.driver.find_elements(By.TAG_NAME, "select"):
+                sid = el.get_attribute("id") or "(sem id)"
+                nome = el.get_attribute("name") or "(sem name)"
+                visivel = el.is_displayed()
+                opcoes = [
+                    f"{o.get_attribute('value')}={(o.text or '').strip()}"
+                    for o in el.find_elements(By.TAG_NAME, "option")
+                ]
+                print(f"   <select id={sid} name={nome} visível={visivel}> opções: {opcoes[:25]}")
+        except Exception as e:
+            print(f"   (não consegui listar os selects: {e})")
 
     def _upload_dropzone(self, caminho_csv: Path):
         self.driver.execute_script("""
@@ -860,8 +903,8 @@ class RedeServiceBot:
         # Vai direto pro formulário pela URL (vale pra primeira base e pras
         # seguintes) — não precisa passar pela grade e clicar em "Novo".
         self._abrir_formulario_importacao()
-        SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
-        SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlcliente")))).select_by_value("000003")
+        self._selecionar("ddlTipoImportacao", "11")
+        self._selecionar("ddlcliente", "000003")
         self._select_quando_disponivel("ddllayout", layout_value)
 
         self._upload_dropzone(caminho_csv)
