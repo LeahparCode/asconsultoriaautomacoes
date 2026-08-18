@@ -811,8 +811,8 @@ class RedeServiceBot:
             self.driver.get(self.URL_IMPORTACAO_NOVA)
 
             if self._esta_na_tela_login():
-                print("⚠️ A sessão caiu de volta para a tela de login do RedeService; refazendo login...")
-                self._fazer_login()
+                print("⚠️ A sessão caiu de volta para a tela de login do RedeService; refazendo login do zero...")
+                self.login_limpo()
                 self.driver.get(self.URL_IMPORTACAO_NOVA)
 
             try:
@@ -820,10 +820,31 @@ class RedeServiceBot:
                 return
             except TimeoutException:
                 if tentativa == 0:
-                    print("⚠️ Formulário de importação não abriu pela URL direta; tentando de novo...")
+                    print("⚠️ Formulário de importação não abriu pela URL direta; refazendo login do zero e tentando de novo...")
+                    self.login_limpo()
         raise TimeoutException(
             f"Formulário de importação (ddlTipoImportacao) não abriu em {self.URL_IMPORTACAO_NOVA} após 2 tentativas."
         )
+
+    def login_limpo(self):
+        """
+        Descarta a sessão atual (cookies + storage) e loga de novo, do zero.
+
+        Observação de produção, consistente em várias execuções: o
+        RedeService invalida a sessão do robô logo depois de uma importação
+        ser enviada. A PRIMEIRA base — que roda logo após um login novo —
+        sempre passa; as seguintes, que reaproveitavam a sessão já usada,
+        caíam na tela de login. Em vez de tentar preservar uma sessão que o
+        servidor já considera morta, cada base começa com um login limpo,
+        recriando a condição que comprovadamente funciona.
+        """
+        try:
+            self.driver.delete_all_cookies()
+            self.driver.execute_script("try { localStorage.clear(); sessionStorage.clear(); } catch (e) {}")
+        except Exception:
+            pass
+        self.driver.get(RS_URL_IMPORT)
+        self._fazer_login()
 
     def _fazer_login(self):
         """Preenche e envia o formulário de login, esperando o pós-login terminar."""
@@ -900,8 +921,16 @@ class RedeServiceBot:
         print(f"✅ Arquivo carregado no Dropzone: {caminho_csv.name}")
 
     def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
-        # Vai direto pro formulário pela URL (vale pra primeira base e pras
-        # seguintes) — não precisa passar pela grade e clicar em "Novo".
+        # Cada base começa com uma sessão nova. O RedeService invalida a
+        # sessão logo depois de uma importação ser enviada — a primeira base
+        # sempre passava (login novo), as seguintes caíam na tela de login.
+        # Logar do zero antes de cada uma recria a condição que funciona.
+        if not is_first:
+            print("🔄 Refazendo login antes da próxima base (a sessão não sobrevive a uma importação)...")
+            self.login_limpo()
+
+        # Vai direto pro formulário pela URL — não precisa passar pela grade
+        # e clicar em "Novo".
         self._abrir_formulario_importacao()
         self._selecionar("ddlTipoImportacao", "11")
         self._selecionar("ddlcliente", "000003")
