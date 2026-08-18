@@ -16,6 +16,10 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
 from selenium.webdriver.support.ui import Select as SeleniumSelect
 
+# O Power BI (acima) roda em Selenium; a importação no RedeService roda em
+# Playwright, por causa do upload nativo de arquivo. Ver RedeServiceBot.
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
 from gdrive_utils import upload_file
 
 # ==========================================
@@ -768,476 +772,342 @@ class PowerBIBot:
 
 
 # ==========================================
-# AUTOMAÇÃO: REDE SERVICE
+# AUTOMAÇÃO: REDE SERVICE (Playwright)
 # ==========================================
+# Essa parte usa Playwright, não Selenium (o Power BI acima segue no
+# Selenium). Motivo: o upload do arquivo.
+#
+# Com Selenium era preciso escrever o caminho no <input type="file">
+# escondido e depois FORJAR eventos de JavaScript ('change' e um 'drop'
+# sintético com DataTransfer) pra convencer o Dropzone de que um arquivo
+# tinha sido solto ali. O Dropzone até aceitava e mostrava o nome na tela,
+# mas o servidor devolvia HTTP 500 ("Erro de servidor interno", página
+# genérica do IIS) e nada era importado — enquanto o mesmo arquivo, subido
+# manualmente pelo navegador, entrava normalmente.
+#
+# `page.set_input_files()` do Playwright anexa o arquivo pelo protocolo
+# nativo do navegador — exatamente como um usuário escolhendo o arquivo na
+# janela do sistema. Não há evento sintético nenhum: o Dropzone recebe o
+# arquivo pelo mesmo caminho do uso manual.
 class RedeServiceBot:
-    # O formulário de importação (o que o botão "Novo" abre) tem URL própria.
-    # Indicada pelo usuário: depois de logado, essa URL já cai direto no
-    # formulário, sem depender do clique no "Novo" — que é justamente o passo
-    # que mais deu problema (botão "clicável" antes do binding do Angular
-    # terminar, modal que não abria, e a recuperação disso refazendo login no
-    # meio do fluxo).
+    # O formulário de importação (o que o botão "Novo" abre) tem URL própria:
+    # depois de logado, ela já cai direto no formulário, sem depender do
+    # clique no "Novo" (passo que dava muito problema — botão "clicável"
+    # antes do binding do Angular terminar, modal que não abria, etc).
     URL_IMPORTACAO_NOVA = "https://cobranca01.redeservice.com.br/cobranca.be.cartaotodos/Importacao/Incluir"
 
-    def __init__(self, driver):
-        self.driver = driver
-        self.wait = WebDriverWait(driver, 30)
-
-    def login_and_navigate(self):
-        print("🌐 Iniciando importação no RedeService...")
-        self.driver.get(RS_URL_IMPORT)
-        # _fazer_login() já espera o pós-login terminar de verdade (sair da
-        # tela de login) antes de seguir. Sem isso, se o redirecionamento
-        # demorar um pouco mais, a navegação seguinte roda ainda em cima da
-        # tela de login e nada do que vem depois encontra o que precisa.
-        self._fazer_login()
-        print("✅ Logado no RedeService.")
-
-    def _esta_na_tela_login(self) -> bool:
-        return bool(self.driver.find_elements(By.ID, "Login")) and bool(self.driver.find_elements(By.ID, "PasswordTextBox"))
-
-    def _abrir_formulario_importacao(self):
-        """
-        Abre o formulário de importação indo direto na URL .../Importacao/Incluir.
-
-        Antes isso era feito clicando no botão "Novo" (`demo-btn-addrow`) e
-        esperando o modal abrir — e era aí que a automação mais emperrava (o
-        botão aparecia "clicável" antes do Angular terminar o binding, o
-        modal não abria, e a recuperação disso acabava refazendo login no
-        meio do fluxo). Ir direto pela URL, com a sessão já estabelecida,
-        pula esse passo inteiro.
-        """
-        for tentativa in range(2):
-            self.driver.get(self.URL_IMPORTACAO_NOVA)
-
-            if self._esta_na_tela_login():
-                print("⚠️ A sessão caiu de volta para a tela de login do RedeService; refazendo login do zero...")
-                self.login_limpo()
-                self.driver.get(self.URL_IMPORTACAO_NOVA)
-
-            try:
-                WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))
-                return
-            except TimeoutException:
-                if tentativa == 0:
-                    print("⚠️ Formulário de importação não abriu pela URL direta; refazendo login do zero e tentando de novo...")
-                    self.login_limpo()
-        raise TimeoutException(
-            f"Formulário de importação (ddlTipoImportacao) não abriu em {self.URL_IMPORTACAO_NOVA} após 2 tentativas."
-        )
-
-    def login_limpo(self):
-        """
-        Descarta a sessão atual (cookies + storage) e loga de novo, do zero.
-
-        Observação de produção, consistente em várias execuções: o
-        RedeService invalida a sessão do robô logo depois de uma importação
-        ser enviada. A PRIMEIRA base — que roda logo após um login novo —
-        sempre passa; as seguintes, que reaproveitavam a sessão já usada,
-        caíam na tela de login. Em vez de tentar preservar uma sessão que o
-        servidor já considera morta, cada base começa com um login limpo,
-        recriando a condição que comprovadamente funciona.
-        """
-        try:
-            self.driver.delete_all_cookies()
-            self.driver.execute_script("try { localStorage.clear(); sessionStorage.clear(); } catch (e) {}")
-        except Exception:
-            pass
-        self.driver.get(RS_URL_IMPORT)
-        self._fazer_login()
-
-    def _fazer_login(self):
-        """Preenche e envia o formulário de login, esperando o pós-login terminar."""
-        WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
-        WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
-        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
-        WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
-
-    def _selecionar(self, select_id: str, value: str):
-        """
-        Seleciona um <option> e dispara change/input explicitamente.
-
-        O select de Layout é populado quando os campos "pai" (Tipo de
-        Importação/Cliente) mudam. Nem sempre a seleção via Selenium faz o
-        framework da página perceber a mudança — sem o evento, o Layout
-        nunca chega a ser carregado e a espera por ele estoura.
-        """
-        el = self.wait.until(EC.element_to_be_clickable((By.ID, select_id)))
-        SeleniumSelect(el).select_by_value(value)
-        self.driver.execute_script(
-            "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));"
-            "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
-            el,
-        )
-        time.sleep(1)
-
-    def _select_quando_disponivel(self, select_id: str, value: str, timeout: int = 40):
-        """
-        Seleciona um <option> por value, esperando ele existir antes.
-
-        Alguns selects (como o de Layout) são populados dinamicamente depois
-        que um select "pai" (Tipo de Importação/Cliente) muda — selecionar
-        direto pode disparar NoSuchElementException porque a opção ainda não
-        chegou no DOM.
-
-        Se a opção não aparecer, despeja no log o que a página REALMENTE tem
-        (todos os selects e suas opções) antes de estourar: já perdi tempo
-        demais supondo o que estava na tela em vez de olhar.
-        """
-        try:
-            WebDriverWait(self.driver, timeout).until(
-                lambda d: d.find_elements(By.CSS_SELECTOR, f"#{select_id} option[value='{value}']")
-            )
-        except TimeoutException:
-            self._dump_selects_da_pagina(select_id, value)
-            raise
-        SeleniumSelect(self.driver.find_element(By.ID, select_id)).select_by_value(value)
-
-    def _dump_selects_da_pagina(self, select_id: str, value: str):
-        """Lista no log todos os <select> da página e suas opções (diagnóstico)."""
-        print(f"⚠️ A opção value='{value}' não apareceu em #{select_id}. Campos que a página tem agora:")
-        try:
-            print(f"   URL atual: {self.driver.current_url}")
-            for el in self.driver.find_elements(By.TAG_NAME, "select"):
-                sid = el.get_attribute("id") or "(sem id)"
-                nome = el.get_attribute("name") or "(sem name)"
-                visivel = el.is_displayed()
-                opcoes = [
-                    f"{o.get_attribute('value')}={(o.text or '').strip()}"
-                    for o in el.find_elements(By.TAG_NAME, "option")
-                ]
-                print(f"   <select id={sid} name={nome} visível={visivel}> opções: {opcoes[:25]}")
-        except Exception as e:
-            print(f"   (não consegui listar os selects: {e})")
-
-    def _upload_dropzone(self, caminho_csv: Path):
-        """
-        Entrega o arquivo ao Dropzone de verdade.
-
-        CAUSA RAIZ do "importa mas não importa": escrever o caminho no
-        <input type="file"> escondido faz o arquivo chegar no input, mas o
-        Dropzone (biblioteca JS) NÃO fica sabendo — ele não lê o input, ele
-        reage a eventos. Resultado: o script achava que tinha subido o
-        arquivo, o RedeService recebia o formulário vazio e respondia
-        "Informe o(s) arquivo(s) para importação!" (confirmado no log, no
-        texto da página depois do Enviar), sem nada ser importado.
-
-        A correção é disparar o evento 'change' no input depois do
-        send_keys, e — para o caso do Dropzone só escutar drag-and-drop —
-        também despachar um evento 'drop' sintético com o arquivo no
-        dataTransfer.
-        """
-        self.driver.execute_script("""
-            document.querySelectorAll('.dropzone input[type="file"], input.dz-hidden-input').forEach(function(el) {
-                el.style.display = 'block'; el.style.opacity = '1'; el.style.position = 'relative'; el.style.width = '1px'; el.style.height = '1px';
-            });
-        """)
-        file_input = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.dropzone input[type="file"], input.dz-hidden-input')))
-        file_input.send_keys(str(caminho_csv.resolve()))
-
-        # Sem isso o Dropzone ignora o arquivo (ver docstring).
-        # O input é re-consultado DENTRO do JS: passar a referência Python de
-        # volta pro script estourava StaleElementReferenceException, porque o
-        # Dropzone recria esse elemento assim que recebe o arquivo.
-        self.driver.execute_script("""
-            var input = document.querySelector('.dropzone input[type="file"], input.dz-hidden-input');
-            if (!input) { return; }
-            input.dispatchEvent(new Event('change', {bubbles: true}));
-
-            // Se o Dropzone só escuta drop, replica o arrastar-e-soltar
-            // usando os arquivos que já estão no input.
-            var zona = document.querySelector('.dropzone');
-            if (zona && input.files && input.files.length) {
-                var dt = new DataTransfer();
-                for (var i = 0; i < input.files.length; i++) { dt.items.add(input.files[i]); }
-                ['dragenter', 'dragover', 'drop'].forEach(function (nome) {
-                    var ev = new DragEvent(nome, {bubbles: true, cancelable: true, dataTransfer: dt});
-                    zona.dispatchEvent(ev);
-                });
-            }
-        """)
-        print(f"📎 Arquivo entregue ao Dropzone: {caminho_csv.name}")
-
-        # Confirma que o Dropzone realmente registrou o arquivo (ele mostra o
-        # nome na tela quando aceita). Sem essa checagem voltamos a "achar"
-        # que subiu.
-        try:
-            WebDriverWait(self.driver, 30).until(
-                lambda d: caminho_csv.name in d.find_element(By.TAG_NAME, "body").text
-            )
-            print("✅ Dropzone confirmou o arquivo na tela.")
-        except TimeoutException:
-            print("⚠️ O nome do arquivo NÃO apareceu na tela — o Dropzone pode não ter aceitado.")
-
-        self._garantir_upload_concluido(caminho_csv)
-
-    # Quando o upload falha, o que interessa é a RESPOSTA do servidor:
-    # status HTTP + corpo + a mensagem que o Dropzone guarda no arquivo.
-    # Sem isso ficamos sabendo que deu erro, mas não por quê.
-    DETALHE_ERRO_JS = """
-            var partes = [];
-            try {
-                var zona = document.querySelector('.dropzone');
-                var dz = Dropzone.forElement(zona);
-                dz.files.forEach(function (f) {
-                    var p = f.name + ' [' + f.status + ']';
-                    p += ' tamanho=' + f.size;
-                    if (f.xhr) {
-                        p += ' HTTP=' + f.xhr.status;
-                        var corpo = '';
-                        try { corpo = (f.xhr.responseText || '').replace(/\\s+/g, ' ').slice(0, 600); } catch (e) { corpo = '(sem corpo)'; }
-                        p += ' resposta="' + corpo + '"';
-                    } else {
-                        p += ' (sem xhr)';
-                    }
-                    if (f.accepted === false) { p += ' REJEITADO-PELO-DROPZONE'; }
-                    partes.push(p);
-                });
-                var msgs = document.querySelectorAll('.dz-error-message');
-                for (var i = 0; i < msgs.length; i++) {
-                    var t = (msgs[i].textContent || '').trim();
-                    if (t) { partes.push('mensagem-na-tela="' + t.slice(0, 300) + '"'); }
-                }
-            } catch (e) {
-                partes.push('(falha ao coletar detalhe: ' + e + ')');
-            }
-            return partes.join(' || ') || '(sem detalhe)';
-        """
-
-    def _detalhe_do_erro_de_upload(self) -> str:
-        """Lê a resposta do servidor (HTTP + corpo) que fez o upload falhar."""
-        try:
-            return self.driver.execute_script(self.DETALHE_ERRO_JS)
-        except Exception as e:
-            return f"(não consegui ler o detalhe: {e})"
-
-    def screenshot_pagina_inteira(self, nome_arquivo: str):
-        """
-        Salva um print da PÁGINA INTEIRA, não só do pedaço visível.
-
-        O `save_screenshot` do Selenium captura apenas a viewport, e a tela de
-        importação é mais alta que isso — o print cortava justamente a parte
-        de baixo, onde ficam as mensagens de erro. Aqui usamos o CDP do Chrome
-        (`Page.captureScreenshot` com `captureBeyondViewport`), que devolve a
-        página toda em alta resolução.
-        """
-        try:
-            metricas = self.driver.execute_cdp_cmd("Page.getLayoutMetrics", {})
-            tamanho = metricas.get("cssContentSize") or metricas.get("contentSize") or {}
-            largura = max(int(tamanho.get("width", 1920)), 1920)
-            altura = max(int(tamanho.get("height", 1080)), 1080)
-            # Chrome recusa capturas absurdamente grandes; 20000px já cobre
-            # qualquer tela desse sistema com folga.
-            altura = min(altura, 20000)
-
-            resultado = self.driver.execute_cdp_cmd("Page.captureScreenshot", {
-                "format": "png",
-                "captureBeyondViewport": True,
-                "clip": {"x": 0, "y": 0, "width": largura, "height": altura, "scale": 1},
-            })
-            import base64
-            with open(nome_arquivo, "wb") as f:
-                f.write(base64.b64decode(resultado["data"]))
-            print(f"🖼️ Print da página inteira ({largura}x{altura}) salvo em: {os.path.abspath(nome_arquivo)}")
-        except Exception as e:
-            print(f"⚠️ Falhou o print da página inteira ({e}); usando o print normal...")
-            try:
-                self.driver.save_screenshot(nome_arquivo)
-                print(f"🖼️ Print (viewport) salvo em: {os.path.abspath(nome_arquivo)}")
-            except Exception as e2:
-                print(f"⚠️ Não consegui salvar print nenhum: {e2}")
-
-    def _garantir_upload_concluido(self, caminho_csv: Path, timeout: int = 180):
-        """
-        Espera o Dropzone terminar de ENVIAR o arquivo pro servidor.
-
-        O arquivo aparecer na tela só significa que entrou na fila do
-        Dropzone — não que subiu. Em produção o RedeService continuava
-        respondendo "Informe o(s) arquivo(s) para importação!" mesmo com o
-        nome do arquivo visível: a fila estava montada, o upload não tinha
-        acontecido.
-
-        Aqui consultamos a API do próprio Dropzone (`Dropzone.forElement`),
-        que expõe o status real de cada arquivo ('added'/'queued',
-        'uploading', 'success', 'error'). Se estiver parado na fila,
-        mandamos processar (`processQueue()`), que é justamente o que a
-        página faria se `autoProcessQueue` estivesse ligado.
-        """
-        estado_js = """
-            if (!window.Dropzone || !Dropzone.forElement) { return 'sem-dropzone'; }
-            var zona = document.querySelector('.dropzone');
-            if (!zona) { return 'sem-zona'; }
-            var dz;
-            try { dz = Dropzone.forElement(zona); } catch (e) { return 'sem-instancia'; }
-            if (!dz || !dz.files) { return 'sem-instancia'; }
-            return dz.files.map(function (f) { return f.name + '=' + f.status; }).join(' | ') || 'sem-arquivos';
-        """
-        processar_js = """
-            var zona = document.querySelector('.dropzone');
-            var dz = Dropzone.forElement(zona);
-            dz.processQueue();
-        """
-
-        estado = self.driver.execute_script(estado_js)
-        print(f"🔎 Estado do Dropzone: {estado}")
-
-        if estado in ("sem-dropzone", "sem-zona", "sem-instancia", "sem-arquivos"):
-            # Sem a API disponível não dá pra acompanhar; o upload pode ser
-            # feito no submit do formulário. Segue o fluxo — a checagem de
-            # recusa depois do Enviar continua valendo como rede de segurança.
-            print("ℹ️ Não consigo consultar a fila do Dropzone; seguindo assim mesmo.")
-            return
-
-        if "=queued" in estado or "=added" in estado:
-            print("⏫ Arquivo parado na fila do Dropzone; mandando processar...")
-            try:
-                self.driver.execute_script(processar_js)
-            except Exception as e:
-                print(f"⚠️ processQueue() falhou: {e}")
-
-        fim = time.time() + timeout
-        while time.time() < fim:
-            estado = self.driver.execute_script(estado_js)
-            if "=success" in estado:
-                print(f"✅ Upload concluído no Dropzone: {estado}")
-                return
-            if "=error" in estado:
-                detalhe = self._detalhe_do_erro_de_upload()
-                # Print da tela no momento EXATO da falha do upload — é aqui
-                # que o RedeService mostra a mensagem de erro, e não depois.
-                self.screenshot_pagina_inteira(
-                    f"erro_upload_{datetime.now().strftime('%H%M%S')}.png"
-                )
-                raise RuntimeError(
-                    f"O servidor recusou o upload do arquivo: {estado}. Resposta: {detalhe}"
-                )
-            time.sleep(3)
-
-        raise RuntimeError(
-            f"O upload não terminou em {timeout}s (estado do Dropzone: {estado}). "
-            f"Enviar agora só geraria 'Informe o(s) arquivo(s) para importação'."
-        )
-
-    # Unidade "AGIL SOLUÇÕES INTEGRADAS", conforme o passo a passo do usuário.
-    # No modal antigo ela já vinha marcada por padrão (selected="selected"), por
-    # isso o script nunca precisou mexer nela. Na página /Importacao/Incluir isso
-    # pode não valer — e um Enviar com Unidade vazia é candidato direto a
-    # "o script diz que enviou mas nada é importado".
+    # Unidade "AGIL SOLUÇÕES INTEGRADAS". Costuma vir marcada por padrão;
+    # só selecionamos se estiver vazia.
     UNIDADE_VALUE = "000001"
 
-    def _selecionar_unidade(self):
-        """
-        Preenche o campo Unidade, achando o <select> pelo value da opção.
-
-        Não tenho o id/name desse campo (o usuário mandou só o <option>), então
-        procuro entre os selects da página um que tenha a opção 000001 e que
-        não seja um dos que já conheço.
-        """
-        conhecidos = {"ddlTipoImportacao", "ddlcliente", "ddllayout"}
-        for el in self.driver.find_elements(By.TAG_NAME, "select"):
-            if (el.get_attribute("id") or "") in conhecidos:
-                continue
-            opcoes = el.find_elements(By.CSS_SELECTOR, f"option[value='{self.UNIDADE_VALUE}']")
-            if not opcoes:
-                continue
-            sel = SeleniumSelect(el)
-            atual = sel.first_selected_option.get_attribute("value") if sel.all_selected_options else None
-            if atual == self.UNIDADE_VALUE:
-                print(f"ℹ️ Unidade já vem selecionada ({self.UNIDADE_VALUE}); não mexo.")
-                return
-            sel.select_by_value(self.UNIDADE_VALUE)
-            self.driver.execute_script(
-                "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));"
-                "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
-                el,
-            )
-            print(f"✅ Unidade selecionada ({self.UNIDADE_VALUE}) em #{el.get_attribute('id') or '(sem id)'}.")
-            time.sleep(1)
-            return
-        print("⚠️ Não achei nenhum campo de Unidade com a opção 000001 nessa tela.")
-
-    def _dump_estado_do_formulario(self, momento: str):
-        """Loga o que cada campo do formulário tem selecionado de verdade."""
-        print(f"🔎 Estado do formulário ({momento}):")
-        try:
-            for el in self.driver.find_elements(By.TAG_NAME, "select"):
-                if not el.is_displayed():
-                    continue
-                sel = SeleniumSelect(el)
-                escolhido = sel.first_selected_option.get_attribute("value") if sel.all_selected_options else "(nada)"
-                texto = sel.first_selected_option.text.strip() if sel.all_selected_options else ""
-                sid = el.get_attribute("id") or el.get_attribute("name") or "(sem id)"
-                print(f"   #{sid} = '{escolhido}' ({texto})")
-        except Exception as e:
-            print(f"   (não consegui ler os campos: {e})")
-
-    def _dump_texto_da_pagina(self, momento: str, limite: int = 1200):
-        """
-        Loga o texto visível da página.
-
-        O RedeService não dá confirmação de sucesso, mas se o formulário for
-        rejeitado por validação (campo obrigatório vazio, por exemplo) a
-        mensagem aparece na tela — e até agora o script nunca olhou pra ela.
-        """
-        print(f"🔎 Texto da página ({momento}):")
-        try:
-            print(f"   URL: {self.driver.current_url}")
-            texto = self.driver.find_element(By.TAG_NAME, "body").text
-            print("   " + (texto[:limite] or "(vazio)").replace("\n", "\n   "))
-        except Exception as e:
-            print(f"   (não consegui ler o texto: {e})")
-
-    def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
-        # Cada base começa com uma sessão nova. O RedeService invalida a
-        # sessão logo depois de uma importação ser enviada — a primeira base
-        # sempre passava (login novo), as seguintes caíam na tela de login.
-        # Logar do zero antes de cada uma recria a condição que funciona.
-        if not is_first:
-            print("🔄 Refazendo login antes da próxima base (a sessão não sobrevive a uma importação)...")
-            self.login_limpo()
-
-        # Vai direto pro formulário pela URL — não precisa passar pela grade
-        # e clicar em "Novo".
-        self._abrir_formulario_importacao()
-        self._selecionar("ddlTipoImportacao", "11")
-        self._selecionar_unidade()
-        self._selecionar("ddlcliente", "000003")
-        self._select_quando_disponivel("ddllayout", layout_value)
-
-        self._upload_dropzone(caminho_csv)
-        print("⏳ Aguardando processamento do upload (10s)...")
-        time.sleep(10)
-
-        self._dump_estado_do_formulario("ANTES do Enviar")
-        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "btnEnviar"))))
-        print(f"📤 Enviar (Layout {layout_value}) clicado.")
-        time.sleep(5)
-        self._dump_texto_da_pagina("DEPOIS do Enviar")
-        self._conferir_rejeicao(layout_value)
-
     # Mensagens de validação que o RedeService mostra quando recusa o envio.
-    # "Informe o(s) arquivo(s) para importação!" foi a que apareceu em
-    # produção enquanto o Dropzone não recebia o arquivo de verdade — e o
-    # script seguia dizendo "enviado com sucesso" por cima dela.
     MENSAGENS_DE_REJEICAO = (
         "Informe o(s) arquivo(s) para importação",
         "campo obrigatório",
         "Campo obrigatório",
     )
 
+    def __init__(self, page):
+        self.page = page
+
+    # ---------- login ----------
+
+    def _esta_na_tela_login(self) -> bool:
+        return self.page.locator("#Login").is_visible() and self.page.locator("#PasswordTextBox").is_visible()
+
+    def _fazer_login(self):
+        self.page.wait_for_selector("#Login", timeout=30000)
+        self.page.fill("#Login", RS_LOGIN)
+        self.page.fill("#PasswordTextBox", RS_SENHA)
+        self.page.click("button[type='submit']")
+        # Espera sair da tela de login de verdade antes de seguir.
+        self.page.wait_for_selector("#Login", state="hidden", timeout=30000)
+
+    def login_and_navigate(self):
+        print("🌐 Iniciando importação no RedeService...")
+        self.page.goto(RS_URL_IMPORT, wait_until="domcontentloaded")
+        self._fazer_login()
+        print("✅ Logado no RedeService.")
+
+    def login_limpo(self):
+        """
+        Descarta a sessão atual (cookies + storage) e loga de novo, do zero.
+
+        O RedeService invalida a sessão do robô logo depois de uma importação
+        ser enviada: a primeira base sempre passava (login novo) e as
+        seguintes caíam na tela de login. Em vez de tentar preservar uma
+        sessão que o servidor já considera morta, cada base começa limpa.
+        """
+        try:
+            self.page.context.clear_cookies()
+            self.page.evaluate("() => { try { localStorage.clear(); sessionStorage.clear(); } catch (e) {} }")
+        except Exception:
+            pass
+        self.page.goto(RS_URL_IMPORT, wait_until="domcontentloaded")
+        self._fazer_login()
+
+    # ---------- formulário ----------
+
+    def _abrir_formulario_importacao(self):
+        """Abre o formulário indo direto na URL, com um retry que refaz login."""
+        for tentativa in range(2):
+            self.page.goto(self.URL_IMPORTACAO_NOVA, wait_until="domcontentloaded")
+
+            if self._esta_na_tela_login():
+                print("⚠️ A sessão caiu para a tela de login do RedeService; refazendo login do zero...")
+                self.login_limpo()
+                self.page.goto(self.URL_IMPORTACAO_NOVA, wait_until="domcontentloaded")
+
+            try:
+                self.page.wait_for_selector("#ddlTipoImportacao", timeout=20000)
+                return
+            except PlaywrightTimeoutError:
+                if tentativa == 0:
+                    print("⚠️ Formulário não abriu pela URL direta; refazendo login e tentando de novo...")
+                    self.login_limpo()
+        raise RuntimeError(
+            f"Formulário de importação (ddlTipoImportacao) não abriu em {self.URL_IMPORTACAO_NOVA} após 2 tentativas."
+        )
+
+    def _selecionar(self, select_id: str, value: str):
+        """
+        Seleciona uma opção. O select_option do Playwright já dispara os
+        eventos input/change nativamente, o que é o que faz o campo Layout
+        (populado dinamicamente a partir dos campos anteriores) carregar.
+        """
+        self.page.select_option(f"#{select_id}", value)
+        self.page.wait_for_timeout(1000)
+
+    def _selecionar_quando_disponivel(self, select_id: str, value: str, timeout: int = 40000):
+        """Espera a opção existir (o Layout é carregado por AJAX) e seleciona."""
+        try:
+            self.page.wait_for_selector(f"#{select_id} option[value='{value}']", state="attached", timeout=timeout)
+        except PlaywrightTimeoutError:
+            self._dump_selects_da_pagina(select_id, value)
+            raise
+        self.page.select_option(f"#{select_id}", value)
+        self.page.wait_for_timeout(500)
+
+    def _selecionar_unidade(self):
+        """Preenche a Unidade se ela não vier marcada por padrão."""
+        seletor = f"select:has(option[value='{self.UNIDADE_VALUE}'])"
+        for el in self.page.locator(seletor).all():
+            sid = el.get_attribute("id") or ""
+            if sid in ("ddlTipoImportacao", "ddlcliente", "ddllayout"):
+                continue
+            atual = el.input_value()
+            if atual == self.UNIDADE_VALUE:
+                print(f"ℹ️ Unidade já vem selecionada ({self.UNIDADE_VALUE}); não mexo.")
+                return
+            el.select_option(self.UNIDADE_VALUE)
+            print(f"✅ Unidade selecionada ({self.UNIDADE_VALUE}) em #{sid or '(sem id)'}.")
+            self.page.wait_for_timeout(1000)
+            return
+        print("⚠️ Não achei nenhum campo de Unidade com a opção 000001 nessa tela.")
+
+    # ---------- upload ----------
+
+    def _upload_arquivo(self, caminho: Path):
+        """
+        Anexa o arquivo pelo mecanismo NATIVO do navegador.
+
+        É o ponto central da migração pro Playwright: `set_input_files`
+        entrega o arquivo ao input do Dropzone do mesmo jeito que a janela
+        de "escolher arquivo" do sistema entregaria. Sem eventos forjados —
+        que era o que diferenciava o robô do uso manual e, tudo indica,
+        o que fazia o servidor responder HTTP 500.
+        """
+        self.page.wait_for_selector(
+            ".dropzone input[type='file'], input.dz-hidden-input", state="attached", timeout=30000
+        )
+        self.page.set_input_files(".dropzone input[type='file'], input.dz-hidden-input", str(caminho.resolve()))
+        print(f"📎 Arquivo anexado (upload nativo): {caminho.name}")
+
+        try:
+            self.page.wait_for_selector(f"text={caminho.name}", timeout=30000)
+            print("✅ Dropzone confirmou o arquivo na tela.")
+        except PlaywrightTimeoutError:
+            print("⚠️ O nome do arquivo NÃO apareceu na tela — o Dropzone pode não ter aceitado.")
+
+        self._garantir_upload_concluido()
+
+    ESTADO_DROPZONE_JS = """
+        () => {
+            if (!window.Dropzone || !Dropzone.forElement) { return 'sem-dropzone'; }
+            const zona = document.querySelector('.dropzone');
+            if (!zona) { return 'sem-zona'; }
+            let dz;
+            try { dz = Dropzone.forElement(zona); } catch (e) { return 'sem-instancia'; }
+            if (!dz || !dz.files) { return 'sem-instancia'; }
+            return dz.files.map(f => f.name + '=' + f.status).join(' | ') || 'sem-arquivos';
+        }
+    """
+
+    # Quando o upload falha, o que interessa é a RESPOSTA do servidor:
+    # status HTTP + corpo + a mensagem que o Dropzone mostra na tela.
+    DETALHE_ERRO_JS = """
+        () => {
+            const partes = [];
+            try {
+                const zona = document.querySelector('.dropzone');
+                const dz = Dropzone.forElement(zona);
+                dz.files.forEach(f => {
+                    let p = f.name + ' [' + f.status + '] tamanho=' + f.size;
+                    if (f.xhr) {
+                        p += ' HTTP=' + f.xhr.status;
+                        let corpo = '';
+                        try { corpo = (f.xhr.responseText || '').replace(/\\s+/g, ' ').slice(0, 600); } catch (e) { corpo = '(sem corpo)'; }
+                        p += ' resposta="' + corpo + '"';
+                    } else { p += ' (sem xhr)'; }
+                    if (f.accepted === false) { p += ' REJEITADO-PELO-DROPZONE'; }
+                    partes.push(p);
+                });
+                document.querySelectorAll('.dz-error-message').forEach(m => {
+                    const t = (m.textContent || '').trim();
+                    if (t) { partes.push('mensagem-na-tela="' + t.slice(0, 300) + '"'); }
+                });
+            } catch (e) {
+                partes.push('(falha ao coletar detalhe: ' + e + ')');
+            }
+            return partes.join(' || ') || '(sem detalhe)';
+        }
+    """
+
+    def _garantir_upload_concluido(self, timeout: int = 180):
+        """
+        Espera o Dropzone terminar de ENVIAR o arquivo pro servidor.
+
+        O nome aparecer na tela só significa que entrou na fila — não que
+        subiu. Consultamos a API do Dropzone (files[].status) pra saber o
+        estado real: 'queued'/'added', 'uploading', 'success', 'error'.
+        """
+        estado = self.page.evaluate(self.ESTADO_DROPZONE_JS)
+        print(f"🔎 Estado do Dropzone: {estado}")
+
+        if estado in ("sem-dropzone", "sem-zona", "sem-instancia", "sem-arquivos"):
+            print("ℹ️ Não consigo consultar a fila do Dropzone; seguindo assim mesmo.")
+            return
+
+        if "=queued" in estado or "=added" in estado:
+            print("⏫ Arquivo parado na fila do Dropzone; mandando processar...")
+            try:
+                self.page.evaluate("() => Dropzone.forElement(document.querySelector('.dropzone')).processQueue()")
+            except Exception as e:
+                print(f"⚠️ processQueue() falhou: {e}")
+
+        fim = time.time() + timeout
+        while time.time() < fim:
+            estado = self.page.evaluate(self.ESTADO_DROPZONE_JS)
+            if "=success" in estado:
+                print(f"✅ Upload concluído no Dropzone: {estado}")
+                return
+            if "=error" in estado:
+                detalhe = self.page.evaluate(self.DETALHE_ERRO_JS)
+                self.screenshot_pagina_inteira(f"erro_upload_{datetime.now().strftime('%H%M%S')}.png")
+                raise RuntimeError(
+                    f"O servidor recusou o upload do arquivo: {estado}. Resposta: {detalhe}"
+                )
+            self.page.wait_for_timeout(3000)
+
+        raise RuntimeError(f"O upload não terminou em {timeout}s (estado do Dropzone: {estado}).")
+
+    # ---------- diagnóstico ----------
+
+    def screenshot_pagina_inteira(self, nome_arquivo: str):
+        """Print da página inteira (o Playwright faz isso nativamente)."""
+        try:
+            self.page.screenshot(path=nome_arquivo, full_page=True)
+            print(f"🖼️ Print da página inteira salvo em: {os.path.abspath(nome_arquivo)}")
+        except Exception as e:
+            print(f"⚠️ Não consegui salvar o print: {e}")
+
+    def salvar_html(self, nome_arquivo: str):
+        try:
+            with open(nome_arquivo, "w", encoding="utf-8") as f:
+                f.write(self.page.content())
+            print(f"HTML da página salvo em: {os.path.abspath(nome_arquivo)}")
+        except Exception as e:
+            print(f"⚠️ Não consegui salvar o HTML: {e}")
+
+    def _dump_selects_da_pagina(self, select_id: str, value: str):
+        print(f"⚠️ A opção value='{value}' não apareceu em #{select_id}. Campos que a página tem agora:")
+        try:
+            print(f"   URL atual: {self.page.url}")
+            dados = self.page.evaluate("""
+                () => Array.from(document.querySelectorAll('select')).map(s => ({
+                    id: s.id || '(sem id)',
+                    name: s.name || '(sem name)',
+                    visivel: s.offsetParent !== null,
+                    opcoes: Array.from(s.options).slice(0, 25).map(o => o.value + '=' + o.text.trim()),
+                }))
+            """)
+            for s in dados:
+                print(f"   <select id={s['id']} name={s['name']} visível={s['visivel']}> opções: {s['opcoes']}")
+        except Exception as e:
+            print(f"   (não consegui listar os selects: {e})")
+
+    def _dump_estado_do_formulario(self, momento: str):
+        print(f"🔎 Estado do formulário ({momento}):")
+        try:
+            dados = self.page.evaluate("""
+                () => Array.from(document.querySelectorAll('select'))
+                    .filter(s => s.offsetParent !== null)
+                    .map(s => ({
+                        id: s.id || s.name || '(sem id)',
+                        valor: s.value,
+                        texto: s.selectedIndex >= 0 ? s.options[s.selectedIndex].text.trim() : '',
+                    }))
+            """)
+            for s in dados:
+                print(f"   #{s['id']} = '{s['valor']}' ({s['texto']})")
+        except Exception as e:
+            print(f"   (não consegui ler os campos: {e})")
+
+    def _dump_texto_da_pagina(self, momento: str, limite: int = 1200):
+        print(f"🔎 Texto da página ({momento}):")
+        try:
+            print(f"   URL: {self.page.url}")
+            texto = self.page.inner_text("body")
+            print("   " + (texto[:limite] or "(vazio)").replace("\n", "\n   "))
+        except Exception as e:
+            print(f"   (não consegui ler o texto: {e})")
+
     def _conferir_rejeicao(self, layout_value: str):
         """Falha se a tela mostrar mensagem de validação depois do Enviar."""
         try:
-            texto = self.driver.find_element(By.TAG_NAME, "body").text
+            texto = self.page.inner_text("body")
         except Exception:
             texto = ""
         for msg in self.MENSAGENS_DE_REJEICAO:
             if msg in texto:
                 raise RuntimeError(
-                    f"O RedeService recusou a importação (Layout {layout_value}): '{msg}'. "
-                    f"Nada foi importado."
+                    f"O RedeService recusou a importação (Layout {layout_value}): '{msg}'. Nada foi importado."
                 )
         print(f"🚀 Importação (Layout {layout_value}) enviada sem mensagem de recusa.")
+
+    # ---------- fluxo de uma base ----------
+
+    def importar_base(self, layout_value: str, caminho_arquivo: Path, is_first: bool = False):
+        # Cada base começa com sessão nova: o RedeService invalida a sessão
+        # logo depois de uma importação ser enviada.
+        if not is_first:
+            print("🔄 Refazendo login antes da próxima base (a sessão não sobrevive a uma importação)...")
+            self.login_limpo()
+
+        self._abrir_formulario_importacao()
+        self._selecionar("ddlTipoImportacao", "11")
+        self._selecionar_unidade()
+        self._selecionar("ddlcliente", "000003")
+        self._selecionar_quando_disponivel("ddllayout", layout_value)
+
+        self._upload_arquivo(caminho_arquivo)
+
+        self._dump_estado_do_formulario("ANTES do Enviar")
+        self.page.click("#btnEnviar")
+        print(f"📤 Enviar (Layout {layout_value}) clicado.")
+        self.page.wait_for_timeout(5000)
+        self._dump_texto_da_pagina("DEPOIS do Enviar")
+        self._conferir_rejeicao(layout_value)
 
 
 # ==========================================
@@ -1312,44 +1182,48 @@ def main():
         print("⚠️ Um ou mais arquivos falharam no download/processamento. Abortando upload.")
         raise RuntimeError("Falha no download/processamento de um ou mais relatórios do Power BI.")
 
-    driver_rs = BrowserFactory.create_chrome()
-    try:
-        rs_bot = RedeServiceBot(driver_rs)
-        rs_bot.login_and_navigate()
-
-        print("\n--- Importação 1: BASE_INADIMPLENCIA ---")
-        rs_bot.importar_base("79", arquivo_csv_inadimplencia, is_first=True)
-
-        print("\n--- Importação 2: BASE_RELACIONAMENTO ---")
-        rs_bot.importar_base("81", arquivo_relacionamento)
-
-        print("\n--- Importação 3: BASE_VENDAS ---")
-        rs_bot.importar_base("82", arquivo_vendas)
-
-        with open("contagens.json", "w", encoding="utf-8") as f:
-            json.dump({
-                "inadimplencia": contagem_inadimplencia,
-                "relacionamento": contagem_relacionamento,
-                "vendas": contagem_vendas,
-            }, f)
-        print(f"\n📊 Linhas importadas — Inadimplência: {contagem_inadimplencia}, Relacionamento: {contagem_relacionamento}, Vendas: {contagem_vendas}")
-
-    except Exception as e:
-        nome_print = f"erro_rs_{datetime.now().strftime('%H%M%S')}.png"
-        print(f"\n❌ [ERRO] Falha na etapa de importação RedeService: {e}\n")
+    # Essa etapa usa Playwright (o Power BI acima segue no Selenium) — o
+    # motivo está no comentário da classe RedeServiceBot: o upload precisa
+    # ser nativo do navegador, não simulado por eventos de JavaScript.
+    headless = os.environ.get("PBI_HEADLESS", "true").lower() != "false"
+    with sync_playwright() as p:
+        navegador = p.chromium.launch(
+            headless=headless,
+            args=["--no-sandbox", "--disable-dev-shm-usage"] if headless else [],
+        )
+        contexto = navegador.new_context(viewport={"width": 1920, "height": 1080})
+        pagina = contexto.new_page()
+        rs_bot = RedeServiceBot(pagina)
         try:
-            # Página inteira, não só a viewport — o print cortado escondia
-            # justamente a parte de baixo da tela de importação.
+            rs_bot.login_and_navigate()
+
+            print("\n--- Importação 1: BASE_INADIMPLENCIA ---")
+            rs_bot.importar_base("79", arquivo_csv_inadimplencia, is_first=True)
+
+            print("\n--- Importação 2: BASE_RELACIONAMENTO ---")
+            rs_bot.importar_base("81", arquivo_relacionamento)
+
+            print("\n--- Importação 3: BASE_VENDAS ---")
+            rs_bot.importar_base("82", arquivo_vendas)
+
+            with open("contagens.json", "w", encoding="utf-8") as f:
+                json.dump({
+                    "inadimplencia": contagem_inadimplencia,
+                    "relacionamento": contagem_relacionamento,
+                    "vendas": contagem_vendas,
+                }, f)
+            print(f"\n📊 Linhas importadas — Inadimplência: {contagem_inadimplencia}, Relacionamento: {contagem_relacionamento}, Vendas: {contagem_vendas}")
+
+        except Exception as e:
+            nome_print = f"erro_rs_{datetime.now().strftime('%H%M%S')}.png"
+            print(f"\n❌ [ERRO] Falha na etapa de importação RedeService: {e}\n")
             rs_bot.screenshot_pagina_inteira(nome_print)
-            with open(nome_print.replace(".png", ".html"), "w", encoding="utf-8") as f:
-                f.write(driver_rs.page_source)
-            print(f"HTML da página salvo em: {os.path.abspath(nome_print.replace('.png', '.html'))}")
-        except Exception as e2:
-            print(f"Não consegui salvar screenshot/HTML de diagnóstico: {e2}")
-        raise
-    finally:
-        print("\n🏁 Todas as importações concluídas. Fechando navegador.")
-        driver_rs.quit()
+            rs_bot.salvar_html(nome_print.replace(".png", ".html"))
+            raise
+        finally:
+            print("\n🏁 Todas as importações concluídas. Fechando navegador.")
+            contexto.close()
+            navegador.close()
 
 if __name__ == "__main__":
     main()
