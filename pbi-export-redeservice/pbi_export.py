@@ -912,7 +912,13 @@ class RedeServiceBot:
         print(f"✅ Arquivo carregado no Dropzone: {caminho_csv.name}")
 
     def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
-        if not is_first:
+        if not is_first and not self._grade_visivel():
+            # Só navega se realmente saiu da página de Importação. Depois de
+            # uma importação confirmada, continuamos nela (a confirmação
+            # acabou de ler a grade ali mesmo) — e navegar de novo por
+            # driver.get() logo após uma importação foi, no log de produção,
+            # exatamente onde a sessão caía (sessaoInvalida=1) entre uma base
+            # e outra, mesmo com as duas anteriores tendo sido confirmadas.
             self.abrir_pagina_importacao()
 
         # Lê o topo da grade AGORA, antes de abrir o modal — já estamos na
@@ -939,6 +945,11 @@ class RedeServiceBot:
 
         self._confirmar_importacao_no_grid(caminho_csv.name, topo_antes)
         print(f"🚀 Importação (Layout {layout_value}) confirmada no histórico do RedeService!")
+
+    def _grade_visivel(self) -> bool:
+        """Estamos na página de Importação, com a grade e o botão 'Novo' prontos?"""
+        botoes = [e for e in self.driver.find_elements(By.ID, "demo-btn-addrow") if e.is_displayed()]
+        return bool(botoes) and self._linha_mais_recente_da_grade() is not None
 
     def _linha_mais_recente_da_grade(self):
         """
