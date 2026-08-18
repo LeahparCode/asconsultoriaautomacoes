@@ -16,10 +16,6 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
 from selenium.webdriver.support.ui import Select as SeleniumSelect
 
-# O Power BI (acima) roda em Selenium; a importação no RedeService roda em
-# Playwright, por causa do upload nativo de arquivo. Ver RedeServiceBot.
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-
 from gdrive_utils import upload_file
 
 # ==========================================
@@ -31,10 +27,12 @@ try:
 except AttributeError:
     pass
 
+# ==========================================
 # CONFIGURAÇÕES GERAIS
 # =========================================
+# Credenciais vêm dos GitHub Secrets (no script original ficavam no código).
 PBI_LOGIN_EMAIL = os.environ.get("PBI_LOGIN_EMAIL")
-PBI_SENHA = os.environ.get("PBI_SENHA")
+PBI_SENHA       = os.environ.get("PBI_SENHA")
 
 URL_INADIMPLENCIA = (
     "https://app.powerbi.com/groups/me/reports/bf194288-6c64-4069-978b-cd7d9ae98f6e/"
@@ -49,25 +47,23 @@ URL_VENDAS = (
     "ReportSectioneef70c731ada62eed0aa?ctid=d7be86d0-66c8-4589-8c27-9cf5f31d3a1d&experience=power-bi&clientSideAuth=0"
 )
 
-FRANQUIAS = ["SALVADOR PARIPE", "SALVADOR LARGO", "SALVADOR CENTRO", "SALVADOR CABULA", "ILHEUS"]
-FRANQUIAS_VENDAS = FRANQUIAS + ["ILHEUS"]   # Relatório 3 inclui também Ilhéus
+FRANQUIAS        = ["SALVADOR PARIPE", "SALVADOR LARGO", "SALVADOR CENTRO", "SALVADOR CABULA"]
+FRANQUIAS_VENDAS = FRANQUIAS   # Atualizado: Ilhéus removido de todos os relatórios
+
 DATA_FILIACAO_INICIO = "04-05-2026"
 
+# No original apontava direto pra pasta do Google Drive na máquina Windows.
+# No runner o download é local e o envio pro Drive é feito por API depois.
 DOWNLOAD_DIR = str(Path(__file__).parent / "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 POST_DOWNLOAD_BUFFER = 2
 
 GDRIVE_FOLDER_ID = os.environ.get("GDRIVE_FOLDER_PBI_ID")
 
-# NOTA: a versão original convertia xlsx -> csv abrindo o Excel de verdade
-# (win32com), que salvava em ";" (ponto e vírgula) por causa do separador de
-# lista regional do Windows em pt-BR, e em cp1252 (ANSI/Windows-1252), que é
-# o encoding padrão do "Salvar como CSV" do Excel em pt-BR — NÃO utf-8-sig.
-# O backend do RedeService (sp_importacao_formata_campos_CARTAO_TODOS) espera
-# esse encoding de largura fixa por byte; utf-8-sig já causou rejeição da
-# importação de Inadimplência com "Invalid length parameter passed to the
-# LEFT or SUBSTRING function" (multi-byte de acentos + BOM descasam o
-# LEFT/SUBSTRING por posição fixa no SQL).
+# O original convertia xlsx -> csv abrindo o Excel de verdade (win32com,
+# SaveAs FileFormat=6), que grava com ";" (separador de lista do Windows
+# pt-BR) e em cp1252 (ANSI), NÃO utf-8. Os runners do GitHub não têm Office,
+# então a conversão é feita com openpyxl reproduzindo esse mesmo formato.
 CSV_DELIMITER = ";"
 CSV_ENCODING = "cp1252"
 
@@ -144,15 +140,13 @@ class FileProcessor:
     @staticmethod
     def _valor_csv(valor):
         """
-        Formata um valor de célula do jeito que o Excel em pt-BR escreveria
-        num "Salvar como CSV": data em DD/MM/AAAA e número decimal com
-        vírgula.
+        Formata uma célula como o Excel em pt-BR escreveria num "Salvar como
+        CSV": data em DD/MM/AAAA e decimal com vírgula.
 
         ATENÇÃO — NÃO MUDAR O FORMATO DE DATA SEM CONFIRMAR NO GESTÃO.
-        Já tentei "melhorar" isso renderizando a data conforme o
-        number_format da célula (a coluna "Data filiação" vem com formato
-        mm-dd-yy, o que daria "08-17-26"). O RedeService NÃO leu a base
-        assim — o formato certo é este aqui, DD/MM/AAAA com barra.
+        Já se tentou renderizar a data conforme o number_format da célula (a
+        coluna "Data filiação" vem como mm-dd-yy, o que daria "08-17-26"): o
+        RedeService NÃO leu a base assim. O certo é DD/MM/AAAA com barra.
         """
         if valor is None:
             return ""
@@ -170,13 +164,11 @@ class FileProcessor:
     @staticmethod
     def contar_linhas(caminho_xlsx: Path, linha_inicio: int = 2) -> int:
         """
-        Conta quantas linhas de dado tem uma planilha (ignorando o cabeçalho).
+        Conta as linhas de dado de uma planilha (ignorando o cabeçalho).
 
-        Só pra alimentar o resumo diário — se der qualquer problema aqui,
-        devolve 0 em vez de derrubar a automação inteira: contar linha é
-        informativo, não pode ser motivo de falhar uma extração que deu certo.
-        (Já derrubou uma execução: em read_only o openpyxl às vezes devolve
-        max_row = None e a comparação com int estourava TypeError.)
+        Serve só pro resumo diário no WhatsApp: se der qualquer problema
+        aqui, devolve 0 em vez de derrubar a automação — contar linha é
+        informativo, não pode fazer uma extração que deu certo falhar.
         """
         wb = None
         try:
@@ -194,20 +186,18 @@ class FileProcessor:
             return 0
         finally:
             if wb is not None:
-                try:
-                    wb.close()
-                except Exception:
-                    pass
+                try: wb.close()
+                except Exception: pass
 
     @staticmethod
     def processar_planilha_inadimplencia(caminho_xlsx: Path) -> tuple[Path, int]:
         """
         Preenche a coluna X com 'Base_<Mês>' e converte para CSV.
 
-        Conversão feita direto via openpyxl (lendo os valores das células e
-        escrevendo com csv.writer), sem depender do Microsoft Excel estar
-        instalado — necessário porque os runners do GitHub Actions não têm
-        Office instalado.
+        No script original a conversão abria o Excel de verdade
+        (win32com, SaveAs FileFormat=6). Os runners do GitHub não têm Office,
+        então aqui a conversão é feita com openpyxl + csv.writer,
+        reproduzindo o mesmo resultado: delimitador ";" e encoding cp1252.
         """
         mes_atual = MESES_PT[datetime.now().month]
         valor_base = f"Base_{mes_atual}"
@@ -233,9 +223,9 @@ class FileProcessor:
         wb.save(caminho_xlsx)
 
         caminho_csv = caminho_xlsx.with_suffix(".csv")
-        print(f"📄 Convertendo para CSV (delimitador '{CSV_DELIMITER}')...")
+        print(f"📄 Convertendo para CSV (delimitador '{CSV_DELIMITER}', encoding {CSV_ENCODING})...")
 
-        with open(caminho_csv, "w", newline="", encoding=CSV_ENCODING) as f:
+        with open(caminho_csv, "w", newline="", encoding=CSV_ENCODING, errors="replace") as f:
             writer = csv.writer(f, delimiter=CSV_DELIMITER)
             for row in ws.iter_rows(min_row=1, max_row=LINHA_FIM):
                 writer.writerow([FileProcessor._valor_csv(cell.value) for cell in row])
@@ -256,9 +246,9 @@ class BrowserFactory:
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
             "safebrowsing.enabled": True,
-            # Sem isso, o runner (locale en-US) faz o Power BI renderizar toda
-            # a interface em inglês, e os seletores por texto/data-testid do
-            # script — escritos em português — deixam de bater.
+            # O runner tem locale en-US: sem isso o Power BI renderiza a
+            # interface em inglês e os seletores por texto (em português)
+            # deixam de bater.
             "intl.accept_languages": "pt-BR,pt",
         }
         opts.add_experimental_option("prefs", prefs)
@@ -269,6 +259,7 @@ class BrowserFactory:
         opts.add_argument("--disable-blink-features=AutomationControlled")
         opts.add_argument("--log-level=3")
         opts.add_argument("--silent")
+        # Necessários no runner (container sem GUI).
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--window-size=1920,1080")
@@ -299,9 +290,7 @@ class PowerBIBot:
 
     def __init__(self, driver):
         self.driver = driver
-        # 60s (era 35s): em runners de nuvem sem GPU, o Power BI demora mais
-        # para renderizar visuais pesados do que numa máquina local.
-        self.wait = WebDriverWait(driver, 60)
+        self.wait = WebDriverWait(driver, 35)
 
     # ── Helper anti-stale: sempre busca o email_header fresco do DOM ───────
     def _fresh_email_header(self):
@@ -316,16 +305,7 @@ class PowerBIBot:
         try:
             email_pbi = WebDriverWait(self.driver, 6).until(EC.element_to_be_clickable((By.ID, "email")))
             WebUtils.safe_type_fast(email_pbi, PBI_LOGIN_EMAIL)
-            # O texto do botão varia com o idioma do navegador ("Enviar" em
-            # pt-BR, "Submit" em en-US) — tenta os dois, e cai para ENTER no
-            # campo se nenhum botão for encontrado a tempo (não depende de
-            # idioma nenhum).
-            try:
-                WebUtils.js_click(self.driver, WebDriverWait(self.driver, 6).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[contains(.,'Enviar') or contains(.,'Submit')]"))
-                ))
-            except Exception:
-                email_pbi.send_keys(Keys.RETURN)
+            WebUtils.js_click(self.driver, WebDriverWait(self.driver, 6).until(EC.element_to_be_clickable((By.XPATH, "//button[contains(.,'Enviar')]"))))
         except: pass
         try:
             WebDriverWait(self.driver, 10).until(EC.url_contains("login.microsoftonline"))
@@ -350,14 +330,14 @@ class PowerBIBot:
         while time.time() < end:
             self.driver.switch_to.default_content()
             if self.driver.find_elements(By.CSS_SELECTOR, "#pvExplorationHost, div.visual, div.canvas, [role='presentation']"):
-                time.sleep(5)
+                time.sleep(2)
                 return
             for f in self.driver.find_elements(By.TAG_NAME, "iframe"):
                 try:
                     self.driver.switch_to.default_content()
                     self.driver.switch_to.frame(f)
                     if self.driver.find_elements(By.CSS_SELECTOR, "#pvExplorationHost, div.visual, div.canvas, [role='presentation']"):
-                        time.sleep(5)
+                        time.sleep(2)
                         return
                 except: pass
             time.sleep(1)
@@ -366,11 +346,7 @@ class PowerBIBot:
     def aplicar_filtro_coluna_exata(self, franquias):
         print("🔍 Buscando barra de pesquisa EXATA da 'Franquia'...")
         titulo_el = self.wait.until(EC.visibility_of_element_located((By.XPATH, "//*[normalize-space(text())='Franquia' or @title='Franquia']")))
-        inputs_pesquisa = self.driver.find_elements(
-            By.XPATH,
-            "//input[contains(@placeholder,'Pesquisar') or contains(@aria-label,'Pesquisar')"
-            " or contains(@placeholder,'Search') or contains(@aria-label,'Search')]",
-        )
+        inputs_pesquisa = self.driver.find_elements(By.XPATH, "//input[contains(@placeholder,'Pesquisar') or contains(@aria-label,'Pesquisar')]")
         inputs_visiveis = [inp for inp in inputs_pesquisa if inp.is_displayed()]
 
         search_input = min(inputs_visiveis, key=lambda inp: abs(inp.location['x'] - titulo_el.location['x'])) if inputs_visiveis else None
@@ -407,7 +383,7 @@ class PowerBIBot:
         self._select_popup_mult(popup, franquias)
 
         try:
-            aplicar = popup.find_element(By.XPATH, ".//button[contains(.,'Aplicar') or contains(.,'Apply')]")
+            aplicar = popup.find_element(By.XPATH, ".//button[contains(.,'Aplicar')]")
             WebUtils.js_click(self.driver, aplicar)
         except: pass
         print("Filtro de Franquia aplicado via popup.")
@@ -462,18 +438,13 @@ class PowerBIBot:
                 export_item = WebDriverWait(self.driver, 8).until(
                     EC.element_to_be_clickable((
                         By.XPATH,
-                        "//div[contains(@class,'pbi-menu-item-text-container')]"
-                        "//span[text()='Exportar dados' or text()='Export data']"
+                        "//div[contains(@class,'pbi-menu-item-text-container')]//span[text()='Exportar dados']"
                     ))
                 )
                 WebUtils.js_click(self.driver, export_item)
             except TimeoutException:
                 export_item = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((
-                        By.CSS_SELECTOR,
-                        "button[data-testid='pbimenu-item.Exportar dados'],"
-                        " button[data-testid='pbimenu-item.Export data']",
-                    ))
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='pbimenu-item.Exportar dados']"))
                 )
                 WebUtils.js_click(self.driver, export_item)
 
@@ -488,7 +459,7 @@ class PowerBIBot:
                 WebUtils.js_click(self.driver, export_btn)
             except TimeoutException:
                 export_btn = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(.)='Exportar' or normalize-space(.)='Export' or contains(@aria-label,'Exportar') or contains(@aria-label,'Export')]"))
+                    EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(.)='Exportar' or contains(@aria-label,'Exportar')]"))
                 )
                 WebUtils.js_click(self.driver, export_btn)
 
@@ -499,24 +470,14 @@ class PowerBIBot:
             if not self._open_more_menu(visual):
                 raise RuntimeError(f"Não consegui abrir o menu 'Mais opções' da tabela para {base_name}.")
 
-            try:
-                export_item = WebDriverWait(self.driver, 8).until(EC.element_to_be_clickable((
-                    By.CSS_SELECTOR,
-                    "button[data-testid='pbimenu-item.Exportar dados'],"
-                    " button[data-testid='pbimenu-item.Export data']",
-                )))
-            except TimeoutException:
-                export_item = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((
-                    By.XPATH,
-                    "//*[normalize-space(text())='Exportar dados' or normalize-space(text())='Export data']",
-                )))
+            export_item = WebDriverWait(self.driver, 8).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='pbimenu-item.Exportar dados']")))
             WebUtils.js_click(self.driver, export_item)
             click_ts = time.time()
 
             try:
                 export_btn = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-testid='export-btn']")))
             except TimeoutException:
-                export_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(.)='Exportar' or normalize-space(.)='Export' or contains(@aria-label,'Exportar') or contains(@aria-label,'Export')]")))
+                export_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//button[normalize-space(.)='Exportar' or contains(@aria-label,'Exportar')]")))
 
             WebUtils.js_click(self.driver, export_btn)
 
@@ -558,7 +519,7 @@ class PowerBIBot:
         return False
 
     def _clear_popup(self, popup):
-        for label in ("Limpar selecoes", "Limpar selecao", "Limpar", "Desmarcar tudo", "Clear selections", "Clear selection", "Clear", "Deselect all"):
+        for label in ("Limpar selecoes", "Limpar selecao", "Limpar", "Desmarcar tudo"):
             try:
                 btn = popup.find_element(By.XPATH, f".//button[contains(.,'{label}')]")
                 WebUtils.js_click(self.driver, btn); time.sleep(0.3); return True
@@ -630,6 +591,10 @@ class PowerBIBot:
     def _open_more_menu_vendas(self, visual):
         actions = ActionChains(self.driver)
 
+        # ── PASSO 1 + 2: Scroll + hover no email_header ────────────────────
+        # Cada operação chama _fresh_email_header() para evitar stale reference.
+        # O Angular do PBI pode re-renderizar o DOM após aplicar filtros,
+        # invalidando qualquer referência guardada anteriormente.
         print("📧 Localizando cabeçalho da coluna 'Email'...")
 
         hover_ok = False
@@ -644,6 +609,7 @@ class PowerBIBot:
                 )
                 time.sleep(0.6)
 
+                # Re-busca após o scroll: o scroll pode provocar nova renderização
                 eh = self._fresh_email_header()
                 if eh is None:
                     break
@@ -665,13 +631,16 @@ class PowerBIBot:
         if not hover_ok:
             print("⚠️ Continuando sem hover no cabeçalho Email.")
 
+        # ── PASSO 3: Buscar vcMenuBtn via DOM traversal ─────────────────────
+        # Re-busca elementos frescos antes de passar ao JavaScript.
         print("🔍 Buscando vcMenuBtn dentro do visual container correto...")
 
-        eh_fresh = self._fresh_email_header()
+        eh_fresh = self._fresh_email_header()   # referência fresca para o JS
 
+        # Valida se o visual ainda é válido; se não, re-busca pelo título
         vis_fresh = None
         try:
-            _ = visual.tag_name
+            _ = visual.tag_name    # testa se o elemento ainda existe no DOM
             vis_fresh = visual
         except StaleElementReferenceException:
             print("⚠️ Visual stale — re-buscando pelo título 'Filiados Inativos'...")
@@ -699,6 +668,8 @@ class PowerBIBot:
                 return null;
             }
 
+            // Estratégia A: sobe a partir do email_header (âncora mais precisa —
+            // garante que é o botão do visual que CONTÉM a coluna Email)
             if (emailHdr) {
                 var el = emailHdr;
                 for (var i = 0; i < 30 && el && el !== document.body; i++) {
@@ -708,6 +679,7 @@ class PowerBIBot:
                 }
             }
 
+            // Estratégia B: sobe a partir do visual container já identificado
             if (vis) {
                 var el2 = vis;
                 for (var j = 0; j < 10 && el2 && el2 !== document.body; j++) {
@@ -717,6 +689,7 @@ class PowerBIBot:
                 }
             }
 
+            // Estratégia C: botão visível mais próximo ao email_header por posição
             if (emailHdr) {
                 var er = emailHdr.getBoundingClientRect();
                 var all = Array.from(document.querySelectorAll(
@@ -743,12 +716,13 @@ class PowerBIBot:
                 print("✅ vcMenuBtn clicado (DOM traversal).")
                 time.sleep(0.5)
                 WebDriverWait(self.driver, 6).until(
-                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'Exportar dados') or contains(text(),'Export data')]"))
+                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'Exportar dados')]"))
                 )
                 return True
             except Exception as e:
                 print(f"⚠️ JS encontrou o btn mas clique falhou: {e}")
 
+        # ── FALLBACK Python ───────────────────────────────────────────────
         print("🔄 Fallback Python: aguardando vcMenuBtn clicável...")
         for attempt, (by, sel) in enumerate([
             (By.XPATH,        "//button[contains(@class,'vcMenuBtn') and @data-testid='visual-more-options-btn']"),
@@ -761,7 +735,7 @@ class PowerBIBot:
                 print(f"✅ vcMenuBtn clicado via fallback Python #{attempt}.")
                 time.sleep(0.5)
                 WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'Exportar dados') or contains(text(),'Export data')]"))
+                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'Exportar dados')]"))
                 )
                 return True
             except Exception:
@@ -772,342 +746,50 @@ class PowerBIBot:
 
 
 # ==========================================
-# AUTOMAÇÃO: REDE SERVICE (Playwright)
+# AUTOMAÇÃO: REDE SERVICE
 # ==========================================
-# Essa parte usa Playwright, não Selenium (o Power BI acima segue no
-# Selenium). Motivo: o upload do arquivo.
-#
-# Com Selenium era preciso escrever o caminho no <input type="file">
-# escondido e depois FORJAR eventos de JavaScript ('change' e um 'drop'
-# sintético com DataTransfer) pra convencer o Dropzone de que um arquivo
-# tinha sido solto ali. O Dropzone até aceitava e mostrava o nome na tela,
-# mas o servidor devolvia HTTP 500 ("Erro de servidor interno", página
-# genérica do IIS) e nada era importado — enquanto o mesmo arquivo, subido
-# manualmente pelo navegador, entrava normalmente.
-#
-# `page.set_input_files()` do Playwright anexa o arquivo pelo protocolo
-# nativo do navegador — exatamente como um usuário escolhendo o arquivo na
-# janela do sistema. Não há evento sintético nenhum: o Dropzone recebe o
-# arquivo pelo mesmo caminho do uso manual.
 class RedeServiceBot:
-    # O formulário de importação (o que o botão "Novo" abre) tem URL própria:
-    # depois de logado, ela já cai direto no formulário, sem depender do
-    # clique no "Novo" (passo que dava muito problema — botão "clicável"
-    # antes do binding do Angular terminar, modal que não abria, etc).
-    URL_IMPORTACAO_NOVA = "https://cobranca01.redeservice.com.br/cobranca.be.cartaotodos/Importacao/Incluir"
-
-    # Unidade "AGIL SOLUÇÕES INTEGRADAS". Costuma vir marcada por padrão;
-    # só selecionamos se estiver vazia.
-    UNIDADE_VALUE = "000001"
-
-    # Mensagens de validação que o RedeService mostra quando recusa o envio.
-    MENSAGENS_DE_REJEICAO = (
-        "Informe o(s) arquivo(s) para importação",
-        "campo obrigatório",
-        "Campo obrigatório",
-    )
-
-    def __init__(self, page):
-        self.page = page
-
-    # ---------- login ----------
-
-    def _esta_na_tela_login(self) -> bool:
-        return self.page.locator("#Login").is_visible() and self.page.locator("#PasswordTextBox").is_visible()
-
-    def _fazer_login(self):
-        self.page.wait_for_selector("#Login", timeout=30000)
-        self.page.fill("#Login", RS_LOGIN)
-        self.page.fill("#PasswordTextBox", RS_SENHA)
-        self.page.click("button[type='submit']")
-        # Espera sair da tela de login de verdade antes de seguir.
-        self.page.wait_for_selector("#Login", state="hidden", timeout=30000)
+    def __init__(self, driver):
+        self.driver = driver
+        self.wait = WebDriverWait(driver, 30)
 
     def login_and_navigate(self):
         print("🌐 Iniciando importação no RedeService...")
-        self.page.goto(RS_URL_IMPORT, wait_until="domcontentloaded")
-        self._fazer_login()
-        print("✅ Logado no RedeService.")
+        self.driver.get(RS_URL_IMPORT)
+        WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
+        WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
+        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
 
-    def login_limpo(self):
-        """
-        Descarta a sessão atual (cookies + storage) e loga de novo, do zero.
+        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(.)='Trabalhos']"))))
+        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//li[@id='Importação']//a"))))
+        print("✅ Logado e na página de Importação.")
 
-        O RedeService invalida a sessão do robô logo depois de uma importação
-        ser enviada: a primeira base sempre passava (login novo) e as
-        seguintes caíam na tela de login. Em vez de tentar preservar uma
-        sessão que o servidor já considera morta, cada base começa limpa.
-        """
-        try:
-            self.page.context.clear_cookies()
-            self.page.evaluate("() => { try { localStorage.clear(); sessionStorage.clear(); } catch (e) {} }")
-        except Exception:
-            pass
-        self.page.goto(RS_URL_IMPORT, wait_until="domcontentloaded")
-        self._fazer_login()
+    def _upload_dropzone(self, caminho_csv: Path):
+        self.driver.execute_script("""
+            document.querySelectorAll('.dropzone input[type="file"], input.dz-hidden-input').forEach(function(el) {
+                el.style.display = 'block'; el.style.opacity = '1'; el.style.position = 'relative'; el.style.width = '1px'; el.style.height = '1px';
+            });
+        """)
+        file_input = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.dropzone input[type="file"], input.dz-hidden-input')))
+        file_input.send_keys(str(caminho_csv.resolve()))
+        print(f"✅ Arquivo carregado no Dropzone: {caminho_csv.name}")
 
-    # ---------- formulário ----------
-
-    def _abrir_formulario_importacao(self):
-        """Abre o formulário indo direto na URL, com um retry que refaz login."""
-        for tentativa in range(2):
-            self.page.goto(self.URL_IMPORTACAO_NOVA, wait_until="domcontentloaded")
-
-            if self._esta_na_tela_login():
-                print("⚠️ A sessão caiu para a tela de login do RedeService; refazendo login do zero...")
-                self.login_limpo()
-                self.page.goto(self.URL_IMPORTACAO_NOVA, wait_until="domcontentloaded")
-
-            try:
-                self.page.wait_for_selector("#ddlTipoImportacao", timeout=20000)
-                return
-            except PlaywrightTimeoutError:
-                if tentativa == 0:
-                    print("⚠️ Formulário não abriu pela URL direta; refazendo login e tentando de novo...")
-                    self.login_limpo()
-        raise RuntimeError(
-            f"Formulário de importação (ddlTipoImportacao) não abriu em {self.URL_IMPORTACAO_NOVA} após 2 tentativas."
-        )
-
-    def _selecionar(self, select_id: str, value: str):
-        """
-        Seleciona uma opção. O select_option do Playwright já dispara os
-        eventos input/change nativamente, o que é o que faz o campo Layout
-        (populado dinamicamente a partir dos campos anteriores) carregar.
-        """
-        self.page.select_option(f"#{select_id}", value)
-        self.page.wait_for_timeout(1000)
-
-    def _selecionar_quando_disponivel(self, select_id: str, value: str, timeout: int = 40000):
-        """Espera a opção existir (o Layout é carregado por AJAX) e seleciona."""
-        try:
-            self.page.wait_for_selector(f"#{select_id} option[value='{value}']", state="attached", timeout=timeout)
-        except PlaywrightTimeoutError:
-            self._dump_selects_da_pagina(select_id, value)
-            raise
-        self.page.select_option(f"#{select_id}", value)
-        self.page.wait_for_timeout(500)
-
-    def _selecionar_unidade(self):
-        """Preenche a Unidade se ela não vier marcada por padrão."""
-        seletor = f"select:has(option[value='{self.UNIDADE_VALUE}'])"
-        for el in self.page.locator(seletor).all():
-            sid = el.get_attribute("id") or ""
-            if sid in ("ddlTipoImportacao", "ddlcliente", "ddllayout"):
-                continue
-            atual = el.input_value()
-            if atual == self.UNIDADE_VALUE:
-                print(f"ℹ️ Unidade já vem selecionada ({self.UNIDADE_VALUE}); não mexo.")
-                return
-            el.select_option(self.UNIDADE_VALUE)
-            print(f"✅ Unidade selecionada ({self.UNIDADE_VALUE}) em #{sid or '(sem id)'}.")
-            self.page.wait_for_timeout(1000)
-            return
-        print("⚠️ Não achei nenhum campo de Unidade com a opção 000001 nessa tela.")
-
-    # ---------- upload ----------
-
-    def _upload_arquivo(self, caminho: Path):
-        """
-        Anexa o arquivo pelo mecanismo NATIVO do navegador.
-
-        É o ponto central da migração pro Playwright: `set_input_files`
-        entrega o arquivo ao input do Dropzone do mesmo jeito que a janela
-        de "escolher arquivo" do sistema entregaria. Sem eventos forjados —
-        que era o que diferenciava o robô do uso manual e, tudo indica,
-        o que fazia o servidor responder HTTP 500.
-        """
-        self.page.wait_for_selector(
-            ".dropzone input[type='file'], input.dz-hidden-input", state="attached", timeout=30000
-        )
-        self.page.set_input_files(".dropzone input[type='file'], input.dz-hidden-input", str(caminho.resolve()))
-        print(f"📎 Arquivo anexado (upload nativo): {caminho.name}")
-
-        try:
-            self.page.wait_for_selector(f"text={caminho.name}", timeout=30000)
-            print("✅ Dropzone confirmou o arquivo na tela.")
-        except PlaywrightTimeoutError:
-            print("⚠️ O nome do arquivo NÃO apareceu na tela — o Dropzone pode não ter aceitado.")
-
-        self._garantir_upload_concluido()
-
-    ESTADO_DROPZONE_JS = """
-        () => {
-            if (!window.Dropzone || !Dropzone.forElement) { return 'sem-dropzone'; }
-            const zona = document.querySelector('.dropzone');
-            if (!zona) { return 'sem-zona'; }
-            let dz;
-            try { dz = Dropzone.forElement(zona); } catch (e) { return 'sem-instancia'; }
-            if (!dz || !dz.files) { return 'sem-instancia'; }
-            return dz.files.map(f => f.name + '=' + f.status).join(' | ') || 'sem-arquivos';
-        }
-    """
-
-    # Quando o upload falha, o que interessa é a RESPOSTA do servidor:
-    # status HTTP + corpo + a mensagem que o Dropzone mostra na tela.
-    DETALHE_ERRO_JS = """
-        () => {
-            const partes = [];
-            try {
-                const zona = document.querySelector('.dropzone');
-                const dz = Dropzone.forElement(zona);
-                dz.files.forEach(f => {
-                    let p = f.name + ' [' + f.status + '] tamanho=' + f.size;
-                    if (f.xhr) {
-                        p += ' HTTP=' + f.xhr.status;
-                        let corpo = '';
-                        try { corpo = (f.xhr.responseText || '').replace(/\\s+/g, ' ').slice(0, 600); } catch (e) { corpo = '(sem corpo)'; }
-                        p += ' resposta="' + corpo + '"';
-                    } else { p += ' (sem xhr)'; }
-                    if (f.accepted === false) { p += ' REJEITADO-PELO-DROPZONE'; }
-                    partes.push(p);
-                });
-                document.querySelectorAll('.dz-error-message').forEach(m => {
-                    const t = (m.textContent || '').trim();
-                    if (t) { partes.push('mensagem-na-tela="' + t.slice(0, 300) + '"'); }
-                });
-            } catch (e) {
-                partes.push('(falha ao coletar detalhe: ' + e + ')');
-            }
-            return partes.join(' || ') || '(sem detalhe)';
-        }
-    """
-
-    def _garantir_upload_concluido(self, timeout: int = 180):
-        """
-        Espera o Dropzone terminar de ENVIAR o arquivo pro servidor.
-
-        O nome aparecer na tela só significa que entrou na fila — não que
-        subiu. Consultamos a API do Dropzone (files[].status) pra saber o
-        estado real: 'queued'/'added', 'uploading', 'success', 'error'.
-        """
-        estado = self.page.evaluate(self.ESTADO_DROPZONE_JS)
-        print(f"🔎 Estado do Dropzone: {estado}")
-
-        if estado in ("sem-dropzone", "sem-zona", "sem-instancia", "sem-arquivos"):
-            print("ℹ️ Não consigo consultar a fila do Dropzone; seguindo assim mesmo.")
-            return
-
-        if "=queued" in estado or "=added" in estado:
-            print("⏫ Arquivo parado na fila do Dropzone; mandando processar...")
-            try:
-                self.page.evaluate("() => Dropzone.forElement(document.querySelector('.dropzone')).processQueue()")
-            except Exception as e:
-                print(f"⚠️ processQueue() falhou: {e}")
-
-        fim = time.time() + timeout
-        while time.time() < fim:
-            estado = self.page.evaluate(self.ESTADO_DROPZONE_JS)
-            if "=success" in estado:
-                print(f"✅ Upload concluído no Dropzone: {estado}")
-                return
-            if "=error" in estado:
-                detalhe = self.page.evaluate(self.DETALHE_ERRO_JS)
-                self.screenshot_pagina_inteira(f"erro_upload_{datetime.now().strftime('%H%M%S')}.png")
-                raise RuntimeError(
-                    f"O servidor recusou o upload do arquivo: {estado}. Resposta: {detalhe}"
-                )
-            self.page.wait_for_timeout(3000)
-
-        raise RuntimeError(f"O upload não terminou em {timeout}s (estado do Dropzone: {estado}).")
-
-    # ---------- diagnóstico ----------
-
-    def screenshot_pagina_inteira(self, nome_arquivo: str):
-        """Print da página inteira (o Playwright faz isso nativamente)."""
-        try:
-            self.page.screenshot(path=nome_arquivo, full_page=True)
-            print(f"🖼️ Print da página inteira salvo em: {os.path.abspath(nome_arquivo)}")
-        except Exception as e:
-            print(f"⚠️ Não consegui salvar o print: {e}")
-
-    def salvar_html(self, nome_arquivo: str):
-        try:
-            with open(nome_arquivo, "w", encoding="utf-8") as f:
-                f.write(self.page.content())
-            print(f"HTML da página salvo em: {os.path.abspath(nome_arquivo)}")
-        except Exception as e:
-            print(f"⚠️ Não consegui salvar o HTML: {e}")
-
-    def _dump_selects_da_pagina(self, select_id: str, value: str):
-        print(f"⚠️ A opção value='{value}' não apareceu em #{select_id}. Campos que a página tem agora:")
-        try:
-            print(f"   URL atual: {self.page.url}")
-            dados = self.page.evaluate("""
-                () => Array.from(document.querySelectorAll('select')).map(s => ({
-                    id: s.id || '(sem id)',
-                    name: s.name || '(sem name)',
-                    visivel: s.offsetParent !== null,
-                    opcoes: Array.from(s.options).slice(0, 25).map(o => o.value + '=' + o.text.trim()),
-                }))
-            """)
-            for s in dados:
-                print(f"   <select id={s['id']} name={s['name']} visível={s['visivel']}> opções: {s['opcoes']}")
-        except Exception as e:
-            print(f"   (não consegui listar os selects: {e})")
-
-    def _dump_estado_do_formulario(self, momento: str):
-        print(f"🔎 Estado do formulário ({momento}):")
-        try:
-            dados = self.page.evaluate("""
-                () => Array.from(document.querySelectorAll('select'))
-                    .filter(s => s.offsetParent !== null)
-                    .map(s => ({
-                        id: s.id || s.name || '(sem id)',
-                        valor: s.value,
-                        texto: s.selectedIndex >= 0 ? s.options[s.selectedIndex].text.trim() : '',
-                    }))
-            """)
-            for s in dados:
-                print(f"   #{s['id']} = '{s['valor']}' ({s['texto']})")
-        except Exception as e:
-            print(f"   (não consegui ler os campos: {e})")
-
-    def _dump_texto_da_pagina(self, momento: str, limite: int = 1200):
-        print(f"🔎 Texto da página ({momento}):")
-        try:
-            print(f"   URL: {self.page.url}")
-            texto = self.page.inner_text("body")
-            print("   " + (texto[:limite] or "(vazio)").replace("\n", "\n   "))
-        except Exception as e:
-            print(f"   (não consegui ler o texto: {e})")
-
-    def _conferir_rejeicao(self, layout_value: str):
-        """Falha se a tela mostrar mensagem de validação depois do Enviar."""
-        try:
-            texto = self.page.inner_text("body")
-        except Exception:
-            texto = ""
-        for msg in self.MENSAGENS_DE_REJEICAO:
-            if msg in texto:
-                raise RuntimeError(
-                    f"O RedeService recusou a importação (Layout {layout_value}): '{msg}'. Nada foi importado."
-                )
-        print(f"🚀 Importação (Layout {layout_value}) enviada sem mensagem de recusa.")
-
-    # ---------- fluxo de uma base ----------
-
-    def importar_base(self, layout_value: str, caminho_arquivo: Path, is_first: bool = False):
-        # Cada base começa com sessão nova: o RedeService invalida a sessão
-        # logo depois de uma importação ser enviada.
+    def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
         if not is_first:
-            print("🔄 Refazendo login antes da próxima base (a sessão não sobrevive a uma importação)...")
-            self.login_limpo()
+            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[@href='/cobranca.be.cartaotodos/Importacao']"))))
 
-        self._abrir_formulario_importacao()
-        self._selecionar("ddlTipoImportacao", "11")
-        self._selecionar_unidade()
-        self._selecionar("ddlcliente", "000003")
-        self._selecionar_quando_disponivel("ddllayout", layout_value)
+        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
+        SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
+        SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlcliente")))).select_by_value("000003")
+        SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddllayout")))).select_by_value(layout_value)
 
-        self._upload_arquivo(caminho_arquivo)
+        self._upload_dropzone(caminho_csv)
+        print("⏳ Aguardando processamento do upload (10s)...")
+        time.sleep(10)
 
-        self._dump_estado_do_formulario("ANTES do Enviar")
-        self.page.click("#btnEnviar")
-        print(f"📤 Enviar (Layout {layout_value}) clicado.")
-        self.page.wait_for_timeout(5000)
-        self._dump_texto_da_pagina("DEPOIS do Enviar")
-        self._conferir_rejeicao(layout_value)
+        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "btnEnviar"))))
+        print(f"🚀 Importação (Layout {layout_value}) enviada com sucesso!")
+        time.sleep(5)
 
 
 # ==========================================
@@ -1162,7 +844,6 @@ def main():
             print(f"Screenshot salva em: {os.path.abspath(nome_print)}")
             with open(nome_print.replace(".png", ".html"), "w", encoding="utf-8") as f:
                 f.write(driver_pbi.page_source)
-            print(f"HTML da página salvo em: {os.path.abspath(nome_print.replace('.png', '.html'))}")
         except Exception as e2:
             print(f"Não consegui salvar screenshot/HTML de diagnóstico: {e2}")
         raise
@@ -1171,8 +852,8 @@ def main():
         driver_pbi.quit()
 
     # Backup no Google Drive dos arquivos extraídos (best-effort). Direto na
-    # pasta de destino, sem subpasta por data — se já existir um arquivo com
-    # o mesmo nome, ele é substituído em vez de duplicado.
+    # pasta de destino, sem subpasta por data — se já existir arquivo com o
+    # mesmo nome, é substituído em vez de duplicado.
     for arquivo in (arquivo_csv_inadimplencia, arquivo_relacionamento, arquivo_vendas):
         if arquivo:
             upload_file(str(arquivo), GDRIVE_FOLDER_ID)
@@ -1182,48 +863,52 @@ def main():
         print("⚠️ Um ou mais arquivos falharam no download/processamento. Abortando upload.")
         raise RuntimeError("Falha no download/processamento de um ou mais relatórios do Power BI.")
 
-    # Essa etapa usa Playwright (o Power BI acima segue no Selenium) — o
-    # motivo está no comentário da classe RedeServiceBot: o upload precisa
-    # ser nativo do navegador, não simulado por eventos de JavaScript.
-    headless = os.environ.get("PBI_HEADLESS", "true").lower() != "false"
-    with sync_playwright() as p:
-        navegador = p.chromium.launch(
-            headless=headless,
-            args=["--no-sandbox", "--disable-dev-shm-usage"] if headless else [],
-        )
-        contexto = navegador.new_context(viewport={"width": 1920, "height": 1080})
-        pagina = contexto.new_page()
-        rs_bot = RedeServiceBot(pagina)
+    driver_rs = BrowserFactory.create_chrome()
+    try:
+        rs_bot = RedeServiceBot(driver_rs)
+        rs_bot.login_and_navigate()
+
+        print("\n--- Importação 1: BASE_INADIMPLENCIA ---")
+        rs_bot.importar_base("79", arquivo_csv_inadimplencia, is_first=True)
+
+        print("\n--- Importação 2: BASE_RELACIONAMENTO ---")
+        rs_bot.importar_base("81", arquivo_relacionamento)
+
+        print("\n--- Importação 3: BASE_VENDAS ---")
+        rs_bot.importar_base("82", arquivo_vendas)
+
+        # Alimenta o Resumo Diário no WhatsApp (o workflow lê esse arquivo).
+        with open("contagens.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "inadimplencia": contagem_inadimplencia,
+                "relacionamento": contagem_relacionamento,
+                "vendas": contagem_vendas,
+            }, f)
+        print(f"\n📊 Linhas importadas — Inadimplência: {contagem_inadimplencia}, Relacionamento: {contagem_relacionamento}, Vendas: {contagem_vendas}")
+
+    except Exception as e:
+        nome_print = f"erro_rs_{datetime.now().strftime('%H%M%S')}.png"
+        print(f"\n❌ [ERRO] Falha na etapa de importação RedeService: {e}\n")
         try:
-            rs_bot.login_and_navigate()
+            driver_rs.save_screenshot(nome_print)
+            print(f"Screenshot salva em: {os.path.abspath(nome_print)}")
+            with open(nome_print.replace(".png", ".html"), "w", encoding="utf-8") as f:
+                f.write(driver_rs.page_source)
+            print(f"URL no momento do erro: {driver_rs.current_url}")
+            print("--- Texto visível da página no momento do erro (até 3000 chars) ---")
+            try:
+                texto_pagina = driver_rs.find_element(By.TAG_NAME, "body").text
+            except Exception:
+                texto_pagina = "(não consegui ler o texto do <body>)"
+            print(texto_pagina[:3000])
+            print("--- Fim do texto visível ---")
+        except Exception as e2:
+            print(f"Não consegui salvar screenshot/HTML de diagnóstico: {e2}")
+        raise
+    finally:
+        print("\n🏁 Todas as importações concluídas. Fechando navegador.")
+        driver_rs.quit()
 
-            print("\n--- Importação 1: BASE_INADIMPLENCIA ---")
-            rs_bot.importar_base("79", arquivo_csv_inadimplencia, is_first=True)
-
-            print("\n--- Importação 2: BASE_RELACIONAMENTO ---")
-            rs_bot.importar_base("81", arquivo_relacionamento)
-
-            print("\n--- Importação 3: BASE_VENDAS ---")
-            rs_bot.importar_base("82", arquivo_vendas)
-
-            with open("contagens.json", "w", encoding="utf-8") as f:
-                json.dump({
-                    "inadimplencia": contagem_inadimplencia,
-                    "relacionamento": contagem_relacionamento,
-                    "vendas": contagem_vendas,
-                }, f)
-            print(f"\n📊 Linhas importadas — Inadimplência: {contagem_inadimplencia}, Relacionamento: {contagem_relacionamento}, Vendas: {contagem_vendas}")
-
-        except Exception as e:
-            nome_print = f"erro_rs_{datetime.now().strftime('%H%M%S')}.png"
-            print(f"\n❌ [ERRO] Falha na etapa de importação RedeService: {e}\n")
-            rs_bot.screenshot_pagina_inteira(nome_print)
-            rs_bot.salvar_html(nome_print.replace(".png", ".html"))
-            raise
-        finally:
-            print("\n🏁 Todas as importações concluídas. Fechando navegador.")
-            contexto.close()
-            navegador.close()
 
 if __name__ == "__main__":
     main()
