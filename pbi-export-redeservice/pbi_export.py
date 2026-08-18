@@ -1011,6 +1011,42 @@ class RedeServiceBot:
         except Exception as e:
             return f"(não consegui ler o detalhe: {e})"
 
+    def screenshot_pagina_inteira(self, nome_arquivo: str):
+        """
+        Salva um print da PÁGINA INTEIRA, não só do pedaço visível.
+
+        O `save_screenshot` do Selenium captura apenas a viewport, e a tela de
+        importação é mais alta que isso — o print cortava justamente a parte
+        de baixo, onde ficam as mensagens de erro. Aqui usamos o CDP do Chrome
+        (`Page.captureScreenshot` com `captureBeyondViewport`), que devolve a
+        página toda em alta resolução.
+        """
+        try:
+            metricas = self.driver.execute_cdp_cmd("Page.getLayoutMetrics", {})
+            tamanho = metricas.get("cssContentSize") or metricas.get("contentSize") or {}
+            largura = max(int(tamanho.get("width", 1920)), 1920)
+            altura = max(int(tamanho.get("height", 1080)), 1080)
+            # Chrome recusa capturas absurdamente grandes; 20000px já cobre
+            # qualquer tela desse sistema com folga.
+            altura = min(altura, 20000)
+
+            resultado = self.driver.execute_cdp_cmd("Page.captureScreenshot", {
+                "format": "png",
+                "captureBeyondViewport": True,
+                "clip": {"x": 0, "y": 0, "width": largura, "height": altura, "scale": 1},
+            })
+            import base64
+            with open(nome_arquivo, "wb") as f:
+                f.write(base64.b64decode(resultado["data"]))
+            print(f"🖼️ Print da página inteira ({largura}x{altura}) salvo em: {os.path.abspath(nome_arquivo)}")
+        except Exception as e:
+            print(f"⚠️ Falhou o print da página inteira ({e}); usando o print normal...")
+            try:
+                self.driver.save_screenshot(nome_arquivo)
+                print(f"🖼️ Print (viewport) salvo em: {os.path.abspath(nome_arquivo)}")
+            except Exception as e2:
+                print(f"⚠️ Não consegui salvar print nenhum: {e2}")
+
     def _garantir_upload_concluido(self, caminho_csv: Path, timeout: int = 180):
         """
         Espera o Dropzone terminar de ENVIAR o arquivo pro servidor.
@@ -1067,6 +1103,11 @@ class RedeServiceBot:
                 return
             if "=error" in estado:
                 detalhe = self._detalhe_do_erro_de_upload()
+                # Print da tela no momento EXATO da falha do upload — é aqui
+                # que o RedeService mostra a mensagem de erro, e não depois.
+                self.screenshot_pagina_inteira(
+                    f"erro_upload_{datetime.now().strftime('%H%M%S')}.png"
+                )
                 raise RuntimeError(
                     f"O servidor recusou o upload do arquivo: {estado}. Resposta: {detalhe}"
                 )
@@ -1297,8 +1338,9 @@ def main():
         nome_print = f"erro_rs_{datetime.now().strftime('%H%M%S')}.png"
         print(f"\n❌ [ERRO] Falha na etapa de importação RedeService: {e}\n")
         try:
-            driver_rs.save_screenshot(nome_print)
-            print(f"Screenshot salva em: {os.path.abspath(nome_print)}")
+            # Página inteira, não só a viewport — o print cortado escondia
+            # justamente a parte de baixo da tela de importação.
+            rs_bot.screenshot_pagina_inteira(nome_print)
             with open(nome_print.replace(".png", ".html"), "w", encoding="utf-8") as f:
                 f.write(driver_rs.page_source)
             print(f"HTML da página salvo em: {os.path.abspath(nome_print.replace('.png', '.html'))}")
