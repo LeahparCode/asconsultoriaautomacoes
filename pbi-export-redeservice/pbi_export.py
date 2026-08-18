@@ -754,25 +754,33 @@ class RedeServiceBot:
         self.wait = WebDriverWait(driver, 30)
 
     # Única adaptação dentro desta classe em relação ao script que roda na
-    # máquina do usuário. Lá o menu lateral abre normalmente; no runner
-    # (headless, sem interface gráfica) o clique em "Trabalhos" não expande o
-    # submenu, então o item "Importação" nunca fica clicável e a navegação
-    # estoura com TimeoutException na tela do DashBoard. A página de
-    # Importação tem URL própria, então basta ir direto por ela quando o menu
-    # não responder. O resto do fluxo (botão "Novo", selects, upload, Enviar)
-    # segue idêntico ao original.
-    URL_IMPORTACAO = "https://cobranca01.redeservice.com.br/cobranca.be.cartaotodos/Importacao"
-
+    # máquina do usuário: os cliques de navegação do menu são feitos via
+    # JavaScript, porque no runner headless o submenu não expande e os links
+    # ficam invisíveis. Ver _ir_para_importacao() — e, principalmente, NÃO
+    # trocar isso por driver.get(): navegar por URL recarrega a página e o
+    # RedeService derruba a sessão (sessaoInvalida=1). Já foi tentado.
     def _ir_para_importacao(self):
-        """Abre a Importação pelo menu; se o menu não responder, vai pela URL."""
+        """
+        Abre a Importação clicando no link do menu, como no script original.
+
+        No runner (headless) o submenu de "Trabalhos" não expande, então o
+        link fica no DOM mas invisível, e `element_to_be_clickable` nunca
+        retorna. A saída NÃO é navegar por URL: um `driver.get()` recarrega
+        a página inteira e o RedeService derruba a sessão nesse momento
+        (`.../Home/Login?sessaoInvalida=1`) — foi o que aconteceu no último
+        run, logo depois de a URL direta ter "funcionado".
+
+        Clicar no link via JavaScript dispara a navegação interna da SPA
+        mesmo com o elemento escondido — exatamente o que o clique do
+        usuário faz na máquina dele, sem recarregar nada.
+        """
         try:
             WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(.)='Trabalhos']"))))
-            WebUtils.js_click(self.driver, WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//li[@id='Importação']//a"))
-            ))
         except TimeoutException:
-            print("⚠️ O submenu 'Trabalhos' não abriu (comum em headless); indo direto pela URL...")
-            self.driver.get(self.URL_IMPORTACAO)
+            print("⚠️ Menu 'Trabalhos' não respondeu; seguindo mesmo assim...")
+
+        link = self.wait.until(EC.presence_of_element_located((By.XPATH, "//li[@id='Importação']//a")))
+        self.driver.execute_script("arguments[0].click();", link)
         self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
 
     def login_and_navigate(self):
@@ -797,15 +805,14 @@ class RedeServiceBot:
 
     def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
         if not is_first:
-            # Mesmo caso do menu: se o link de voltar pra Importação não
-            # estiver clicável no headless, vai pela URL.
-            try:
-                WebUtils.js_click(self.driver, WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//a[@href='/cobranca.be.cartaotodos/Importacao']"))
-                ))
-            except TimeoutException:
-                print("⚠️ Link de voltar pra Importação não respondeu; indo direto pela URL...")
-                self.driver.get(self.URL_IMPORTACAO)
+            # Clique por JavaScript pelo mesmo motivo de _ir_para_importacao():
+            # mantém a navegação interna da SPA e não recarrega a página, o
+            # que derrubaria a sessão.
+            link = self.wait.until(EC.presence_of_element_located(
+                (By.XPATH, "//a[@href='/cobranca.be.cartaotodos/Importacao']")
+            ))
+            self.driver.execute_script("arguments[0].click();", link)
+            self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
 
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
