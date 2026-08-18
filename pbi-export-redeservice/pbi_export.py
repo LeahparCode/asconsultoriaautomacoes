@@ -923,14 +923,7 @@ class RedeServiceBot:
         # existir, e passou a falhar sempre depois que ela passou a navegar
         # logo após o Enviar. "Novo" abre um modal por cima da própria
         # grade — não precisa de reload nenhum pra ler ela.
-        FILENAME_SELECTOR = "td.grid-cell[data-name='log_arquivo']"
-        try:
-            celulas = WebDriverWait(self.driver, 15).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, FILENAME_SELECTOR))
-            )
-            topo_antes = celulas[0].text.strip() if celulas else None
-        except Exception:
-            topo_antes = None
+        topo_antes = self._linha_mais_recente_da_grade()
 
         self._abrir_modal_novo()
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
@@ -944,18 +937,51 @@ class RedeServiceBot:
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "btnEnviar"))))
         print(f"📤 Clique em Enviar (Layout {layout_value}) feito; confirmando no histórico do RedeService...")
 
-        self._confirmar_importacao_no_grid(caminho_csv.name, topo_antes, FILENAME_SELECTOR)
+        self._confirmar_importacao_no_grid(caminho_csv.name, topo_antes)
         print(f"🚀 Importação (Layout {layout_value}) confirmada no histórico do RedeService!")
 
-    def _confirmar_importacao_no_grid(self, nome_arquivo: str, topo_antes, seletor: str, timeout: int = 180, intervalo: int = 8):
+    def _linha_mais_recente_da_grade(self):
+        """
+        Lê a 1ª linha de dado da grade de histórico a partir do TEXTO
+        visível da página (body.text), sem depender de um seletor CSS pras
+        células.
+
+        Confirmado em produção: o seletor `td.grid-cell[data-name="log_arquivo"]`
+        (baseado no HTML que o usuário inspecionou manualmente) NUNCA deu
+        match, mesmo com a grade visivelmente populada — o diagnóstico de
+        erro capturava o texto certinho (cabeçalhos + linhas com
+        "CONCLUÍDO" e o nome do arquivo), mas o `presence_of_all_elements_located`
+        nunca encontrava nada em 180s de tentativas. Ler direto o texto
+        renderizado, que já provou duas vezes captar a grade corretamente,
+        evita depender desse seletor que não bate com o DOM real.
+
+        A grade é ordenada da mais recente pra mais antiga (confirmado no
+        print original do usuário), então a 1ª linha de dado logo depois
+        do cabeçalho "AÇÕES" é a mais recente.
+        """
+        try:
+            texto = self.driver.find_element(By.TAG_NAME, "body").text
+        except Exception:
+            return None
+        linhas = [l.strip() for l in texto.splitlines()]
+        try:
+            idx = linhas.index("AÇÕES")
+        except ValueError:
+            return None
+        for linha in linhas[idx + 1:]:
+            if linha:
+                return linha
+        return None
+
+    def _confirmar_importacao_no_grid(self, nome_arquivo: str, topo_antes, timeout: int = 180, intervalo: int = 8):
         """
         O RedeService não mostra NENHUMA confirmação na tela depois de
         clicar em "Enviar" (nem toast, nem alerta) — confirmado com o
         usuário, que também não vê nada ao importar manualmente. A única
         forma de saber se a importação foi aceita de verdade é a mesma que
         o usuário usa: conferir se surge uma linha nova, no topo da grade
-        de histórico (ordenada da mais recente pra mais antiga), com o
-        nome do arquivo que acabou de subir.
+        de histórico (ordenada da mais recente pra mais antiga), contendo
+        o nome do arquivo que acabou de subir.
 
         IMPORTANTE: não navega (driver.get) enquanto a página atual ainda
         mostrar a grade — "Enviar" fecha um modal por cima da própria
@@ -970,15 +996,9 @@ class RedeServiceBot:
         tentativas_sem_navegar = 0
 
         while time.time() < fim:
-            try:
-                celulas = WebDriverWait(self.driver, 12).until(
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, seletor))
-                )
-                topo_depois = celulas[0].text.strip() if celulas else None
-            except Exception:
-                topo_depois = None
+            topo_depois = self._linha_mais_recente_da_grade()
 
-            if topo_depois == nome_arquivo and topo_depois != topo_antes:
+            if topo_depois and nome_arquivo in topo_depois and topo_depois != topo_antes:
                 return
 
             tentativas_sem_navegar += 1
