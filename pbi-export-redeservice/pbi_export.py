@@ -920,6 +920,75 @@ class RedeServiceBot:
         file_input.send_keys(str(caminho_csv.resolve()))
         print(f"✅ Arquivo carregado no Dropzone: {caminho_csv.name}")
 
+    # Unidade "AGIL SOLUÇÕES INTEGRADAS", conforme o passo a passo do usuário.
+    # No modal antigo ela já vinha marcada por padrão (selected="selected"), por
+    # isso o script nunca precisou mexer nela. Na página /Importacao/Incluir isso
+    # pode não valer — e um Enviar com Unidade vazia é candidato direto a
+    # "o script diz que enviou mas nada é importado".
+    UNIDADE_VALUE = "000001"
+
+    def _selecionar_unidade(self):
+        """
+        Preenche o campo Unidade, achando o <select> pelo value da opção.
+
+        Não tenho o id/name desse campo (o usuário mandou só o <option>), então
+        procuro entre os selects da página um que tenha a opção 000001 e que
+        não seja um dos que já conheço.
+        """
+        conhecidos = {"ddlTipoImportacao", "ddlcliente", "ddllayout"}
+        for el in self.driver.find_elements(By.TAG_NAME, "select"):
+            if (el.get_attribute("id") or "") in conhecidos:
+                continue
+            opcoes = el.find_elements(By.CSS_SELECTOR, f"option[value='{self.UNIDADE_VALUE}']")
+            if not opcoes:
+                continue
+            sel = SeleniumSelect(el)
+            atual = sel.first_selected_option.get_attribute("value") if sel.all_selected_options else None
+            if atual == self.UNIDADE_VALUE:
+                print(f"ℹ️ Unidade já vem selecionada ({self.UNIDADE_VALUE}); não mexo.")
+                return
+            sel.select_by_value(self.UNIDADE_VALUE)
+            self.driver.execute_script(
+                "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));"
+                "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
+                el,
+            )
+            print(f"✅ Unidade selecionada ({self.UNIDADE_VALUE}) em #{el.get_attribute('id') or '(sem id)'}.")
+            time.sleep(1)
+            return
+        print("⚠️ Não achei nenhum campo de Unidade com a opção 000001 nessa tela.")
+
+    def _dump_estado_do_formulario(self, momento: str):
+        """Loga o que cada campo do formulário tem selecionado de verdade."""
+        print(f"🔎 Estado do formulário ({momento}):")
+        try:
+            for el in self.driver.find_elements(By.TAG_NAME, "select"):
+                if not el.is_displayed():
+                    continue
+                sel = SeleniumSelect(el)
+                escolhido = sel.first_selected_option.get_attribute("value") if sel.all_selected_options else "(nada)"
+                texto = sel.first_selected_option.text.strip() if sel.all_selected_options else ""
+                sid = el.get_attribute("id") or el.get_attribute("name") or "(sem id)"
+                print(f"   #{sid} = '{escolhido}' ({texto})")
+        except Exception as e:
+            print(f"   (não consegui ler os campos: {e})")
+
+    def _dump_texto_da_pagina(self, momento: str, limite: int = 1200):
+        """
+        Loga o texto visível da página.
+
+        O RedeService não dá confirmação de sucesso, mas se o formulário for
+        rejeitado por validação (campo obrigatório vazio, por exemplo) a
+        mensagem aparece na tela — e até agora o script nunca olhou pra ela.
+        """
+        print(f"🔎 Texto da página ({momento}):")
+        try:
+            print(f"   URL: {self.driver.current_url}")
+            texto = self.driver.find_element(By.TAG_NAME, "body").text
+            print("   " + (texto[:limite] or "(vazio)").replace("\n", "\n   "))
+        except Exception as e:
+            print(f"   (não consegui ler o texto: {e})")
+
     def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
         # Cada base começa com uma sessão nova. O RedeService invalida a
         # sessão logo depois de uma importação ser enviada — a primeira base
@@ -933,6 +1002,7 @@ class RedeServiceBot:
         # e clicar em "Novo".
         self._abrir_formulario_importacao()
         self._selecionar("ddlTipoImportacao", "11")
+        self._selecionar_unidade()
         self._selecionar("ddlcliente", "000003")
         self._select_quando_disponivel("ddllayout", layout_value)
 
@@ -940,9 +1010,11 @@ class RedeServiceBot:
         print("⏳ Aguardando processamento do upload (10s)...")
         time.sleep(10)
 
+        self._dump_estado_do_formulario("ANTES do Enviar")
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "btnEnviar"))))
-        print(f"🚀 Importação (Layout {layout_value}) enviada com sucesso!")
+        print(f"📤 Enviar (Layout {layout_value}) clicado.")
         time.sleep(5)
+        self._dump_texto_da_pagina("DEPOIS do Enviar")
 
 
 # ==========================================
