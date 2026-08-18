@@ -22,7 +22,9 @@ Exporta 3 relatórios do Power BI (Inadimplência, Relacionamento, Vendas), conv
 
    **Sempre confira o histórico de importação dentro do RedeService**, não só o log do script: o upload aparece como "sucesso" no script mesmo quando o backend rejeita o arquivo depois, de forma assíncrona.
 
-3. **O script não confirma se a importação foi realmente aceita.** Depois de clicar em "Enviar" ele imprime "enviada com sucesso" e segue — o RedeService não mostra confirmação nenhuma na tela (nem toast, nem alerta; nem manualmente aparece), então o script não tem como saber ali na hora se o backend aceitou o arquivo. **Confira o histórico de Importação dentro do RedeService** pra ter certeza.
+3. **O formulário de importação é aberto direto por URL** (`.../cobranca.be.cartaotodos/Importacao/Incluir`), não clicando no botão "Novo". Depois de logado, essa URL já cai no formulário. O clique no "Novo" (`demo-btn-addrow`) era o passo mais problemático do fluxo — o botão ficava "clicável" antes do Angular terminar o binding, o modal não abria, e a recuperação disso acabava refazendo login no meio da importação. Ir direto pela URL pula tudo isso.
+
+4. **O script não confirma se a importação foi realmente aceita.** Depois de clicar em "Enviar" ele imprime "enviada com sucesso" e segue — o RedeService não mostra confirmação nenhuma na tela (nem toast, nem alerta; nem manualmente aparece), então o script não tem como saber ali na hora se o backend aceitou o arquivo. **Confira o histórico de Importação dentro do RedeService** pra ter certeza.
 
    Cheguei a implementar uma checagem que voltava na grade de histórico pra confirmar a linha nova, mas ela foi revertida (18/08/2026) a pedido do usuário: qualquer navegação (`driver.get`) dentro do fluxo de importação fazia o RedeService derrubar a sessão do robô (`.../Home/Login?sessaoInvalida=1`), quebrando importações que antes passavam. Se for tentar isso de novo, o ponto de partida é: **não navegar** — ler a grade da página atual, já que "Novo" abre um modal por cima dela — e ler por texto, porque o seletor `td.grid-cell[data-name="log_arquivo"]` nunca deu match apesar da grade estar populada.
 
