@@ -971,6 +971,46 @@ class RedeServiceBot:
 
         self._garantir_upload_concluido(caminho_csv)
 
+    # Quando o upload falha, o que interessa é a RESPOSTA do servidor:
+    # status HTTP + corpo + a mensagem que o Dropzone guarda no arquivo.
+    # Sem isso ficamos sabendo que deu erro, mas não por quê.
+    DETALHE_ERRO_JS = """
+            var partes = [];
+            try {
+                var zona = document.querySelector('.dropzone');
+                var dz = Dropzone.forElement(zona);
+                dz.files.forEach(function (f) {
+                    var p = f.name + ' [' + f.status + ']';
+                    p += ' tamanho=' + f.size;
+                    if (f.xhr) {
+                        p += ' HTTP=' + f.xhr.status;
+                        var corpo = '';
+                        try { corpo = (f.xhr.responseText || '').replace(/\\s+/g, ' ').slice(0, 600); } catch (e) { corpo = '(sem corpo)'; }
+                        p += ' resposta="' + corpo + '"';
+                    } else {
+                        p += ' (sem xhr)';
+                    }
+                    if (f.accepted === false) { p += ' REJEITADO-PELO-DROPZONE'; }
+                    partes.push(p);
+                });
+                var msgs = document.querySelectorAll('.dz-error-message');
+                for (var i = 0; i < msgs.length; i++) {
+                    var t = (msgs[i].textContent || '').trim();
+                    if (t) { partes.push('mensagem-na-tela="' + t.slice(0, 300) + '"'); }
+                }
+            } catch (e) {
+                partes.push('(falha ao coletar detalhe: ' + e + ')');
+            }
+            return partes.join(' || ') || '(sem detalhe)';
+        """
+
+    def _detalhe_do_erro_de_upload(self) -> str:
+        """Lê a resposta do servidor (HTTP + corpo) que fez o upload falhar."""
+        try:
+            return self.driver.execute_script(self.DETALHE_ERRO_JS)
+        except Exception as e:
+            return f"(não consegui ler o detalhe: {e})"
+
     def _garantir_upload_concluido(self, caminho_csv: Path, timeout: int = 180):
         """
         Espera o Dropzone terminar de ENVIAR o arquivo pro servidor.
@@ -1026,7 +1066,10 @@ class RedeServiceBot:
                 print(f"✅ Upload concluído no Dropzone: {estado}")
                 return
             if "=error" in estado:
-                raise RuntimeError(f"O Dropzone marcou o upload como erro: {estado}")
+                detalhe = self._detalhe_do_erro_de_upload()
+                raise RuntimeError(
+                    f"O servidor recusou o upload do arquivo: {estado}. Resposta: {detalhe}"
+                )
             time.sleep(3)
 
         raise RuntimeError(
