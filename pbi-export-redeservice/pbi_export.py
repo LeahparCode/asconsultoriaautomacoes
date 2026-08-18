@@ -753,6 +753,28 @@ class RedeServiceBot:
         self.driver = driver
         self.wait = WebDriverWait(driver, 30)
 
+    # Única adaptação dentro desta classe em relação ao script que roda na
+    # máquina do usuário. Lá o menu lateral abre normalmente; no runner
+    # (headless, sem interface gráfica) o clique em "Trabalhos" não expande o
+    # submenu, então o item "Importação" nunca fica clicável e a navegação
+    # estoura com TimeoutException na tela do DashBoard. A página de
+    # Importação tem URL própria, então basta ir direto por ela quando o menu
+    # não responder. O resto do fluxo (botão "Novo", selects, upload, Enviar)
+    # segue idêntico ao original.
+    URL_IMPORTACAO = "https://cobranca01.redeservice.com.br/cobranca.be.cartaotodos/Importacao"
+
+    def _ir_para_importacao(self):
+        """Abre a Importação pelo menu; se o menu não responder, vai pela URL."""
+        try:
+            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(.)='Trabalhos']"))))
+            WebUtils.js_click(self.driver, WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//li[@id='Importação']//a"))
+            ))
+        except TimeoutException:
+            print("⚠️ O submenu 'Trabalhos' não abriu (comum em headless); indo direto pela URL...")
+            self.driver.get(self.URL_IMPORTACAO)
+        self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
+
     def login_and_navigate(self):
         print("🌐 Iniciando importação no RedeService...")
         self.driver.get(RS_URL_IMPORT)
@@ -760,8 +782,7 @@ class RedeServiceBot:
         WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
 
-        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(.)='Trabalhos']"))))
-        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//li[@id='Importação']//a"))))
+        self._ir_para_importacao()
         print("✅ Logado e na página de Importação.")
 
     def _upload_dropzone(self, caminho_csv: Path):
@@ -776,7 +797,15 @@ class RedeServiceBot:
 
     def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
         if not is_first:
-            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.XPATH, "//a[@href='/cobranca.be.cartaotodos/Importacao']"))))
+            # Mesmo caso do menu: se o link de voltar pra Importação não
+            # estiver clicável no headless, vai pela URL.
+            try:
+                WebUtils.js_click(self.driver, WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, "//a[@href='/cobranca.be.cartaotodos/Importacao']"))
+                ))
+            except TimeoutException:
+                print("⚠️ Link de voltar pra Importação não respondeu; indo direto pela URL...")
+                self.driver.get(self.URL_IMPORTACAO)
 
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
