@@ -26,7 +26,13 @@ Exporta 3 relatórios do Power BI (Inadimplência, Relacionamento, Vendas), conv
 
 4. **A sessão do RedeService não sobrevive a uma importação — cada base loga do zero.** Observado de forma consistente em várias execuções: depois que uma importação é enviada, o servidor invalida a sessão do robô. A primeira base (que roda logo após o login) sempre passava; as seguintes, reaproveitando a mesma sessão, caíam na tela de login (`.../Home/Login?sessaoInvalida=1`). Em vez de tentar preservar uma sessão que o servidor já considera morta, `importar_base()` chama `login_limpo()` antes de cada base a partir da segunda — limpa cookies/storage e loga de novo, recriando a condição que comprovadamente funciona.
 
-5. **O arquivo tem que ser ENTREGUE ao Dropzone, não só escrito no input.** Essa foi a causa raiz do sintoma "o script diz que importou mas nada aparece no gestão", que custou muitas horas. Escrever o caminho no `<input type="file">` escondido (`send_keys`) coloca o arquivo no input, mas o **Dropzone não lê o input — ele reage a eventos**. Sem disparar `change` (e um `drop` sintético com o `dataTransfer`), o Dropzone nunca registra o arquivo: o formulário é enviado vazio e o RedeService responde **"Informe o(s) arquivo(s) para importação!"** na própria tela, sem importar nada. O script não olhava essa mensagem e seguia dizendo "enviado com sucesso". Agora `_upload_dropzone()` dispara os eventos e confere se o nome do arquivo aparece na tela, e `_conferir_rejeicao()` falha de verdade se a mensagem de recusa estiver lá depois do Enviar.
+5. **O upload do arquivo é feito em Playwright, não em Selenium — e isso é proposital.** A etapa do Power BI (acima no arquivo) roda em Selenium; só a `RedeServiceBot` usa Playwright. O motivo é o upload.
+
+   No Selenium era preciso escrever o caminho no `<input type="file">` escondido e depois **forjar eventos de JavaScript** (`change` e um `drop` sintético com `DataTransfer`) pra convencer o Dropzone de que um arquivo tinha sido solto ali. O Dropzone até aceitava e mostrava o nome na tela, mas o servidor devolvia **HTTP 500** (página genérica de erro do IIS) e nada era importado — enquanto o mesmo arquivo, subido manualmente pelo navegador, entrava normalmente.
+
+   `page.set_input_files()` anexa o arquivo pelo **protocolo nativo do navegador**, exatamente como um usuário escolhendo o arquivo na janela do sistema. Sem evento sintético nenhum. Se um dia alguém pensar em voltar essa parte pro Selenium: foi tentado, e é aqui que quebra.
+
+   O `_garantir_upload_concluido()` continua conferindo o status real na API do Dropzone (`files[].status`: `queued` → `uploading` → `success`/`error`) antes de clicar em Enviar, e `_conferir_rejeicao()` falha de verdade se a tela mostrar mensagem de recusa depois do envio.
 
 6. **O script não confirma se a importação foi realmente aceita.** Depois de clicar em "Enviar" ele imprime "enviada com sucesso" e segue — o RedeService não mostra confirmação nenhuma na tela (nem toast, nem alerta; nem manualmente aparece), então o script não tem como saber ali na hora se o backend aceitou o arquivo. **Confira o histórico de Importação dentro do RedeService** pra ter certeza.
 
@@ -37,9 +43,12 @@ Exporta 3 relatórios do Power BI (Inadimplência, Relacionamento, Vendas), conv
 ```bash
 pip install -r requirements.txt
 # Selenium 4.6+ baixa o chromedriver automaticamente (Selenium Manager),
-# só precisa ter o Google Chrome instalado na máquina.
+# só precisa ter o Google Chrome instalado na máquina (usado no Power BI).
+playwright install chromium   # usado na parte do RedeService
 PBI_LOGIN_EMAIL=... PBI_SENHA=... RS_LOGIN=2 RS_SENHA=... PBI_HEADLESS=false python pbi_export.py
 ```
+
+Com `PBI_HEADLESS=false` os dois navegadores abrem na tela e dá pra acompanhar o passo a passo — inclusive a importação no RedeService.
 
 ## Workflow
 

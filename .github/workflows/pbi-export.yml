@@ -32,7 +32,11 @@ jobs:
           chrome-version: stable
 
       - name: Instalar dependências
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          # A etapa do RedeService usa Playwright (upload nativo de arquivo);
+          # a do Power BI continua no Selenium, com o Chrome instalado acima.
+          playwright install --with-deps chromium
 
       - name: Rodar automação (com retentativas, igual ao ControladorPBI.py)
         env:
