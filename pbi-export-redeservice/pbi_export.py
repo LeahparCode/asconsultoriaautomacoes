@@ -771,9 +771,13 @@ class PowerBIBot:
 # AUTOMAÇÃO: REDE SERVICE
 # ==========================================
 class RedeServiceBot:
-    # A página de Importação é alcançável direto por URL — o próprio fluxo já
-    # usa esse mesmo href para voltar entre uma base e outra.
-    URL_IMPORTACAO = "https://cobranca01.redeservice.com.br/cobranca.be.cartaotodos/Importacao"
+    # O formulário de importação (o que o botão "Novo" abre) tem URL própria.
+    # Indicada pelo usuário: depois de logado, essa URL já cai direto no
+    # formulário, sem depender do clique no "Novo" — que é justamente o passo
+    # que mais deu problema (botão "clicável" antes do binding do Angular
+    # terminar, modal que não abria, e a recuperação disso refazendo login no
+    # meio do fluxo).
+    URL_IMPORTACAO_NOVA = "https://cobranca01.redeservice.com.br/cobranca.be.cartaotodos/Importacao/Incluir"
 
     def __init__(self, driver):
         self.driver = driver
@@ -782,92 +786,51 @@ class RedeServiceBot:
     def login_and_navigate(self):
         print("🌐 Iniciando importação no RedeService...")
         self.driver.get(RS_URL_IMPORT)
-        WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
-        WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
-        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
-
-        # Espera o pós-login terminar de verdade (sair da tela de login)
-        # antes de navegar. Sem isso, se o redirecionamento demorar um
-        # pouco mais (o site mudou o frontend, pode ter ficado mais lento),
-        # a navegação seguinte roda ainda em cima da tela de login e nada
-        # do que vem depois encontra o que precisa.
-        WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
-
-        self.abrir_pagina_importacao(via_menu=True)
-        print("✅ Logado e na página de Importação.")
+        # _fazer_login() já espera o pós-login terminar de verdade (sair da
+        # tela de login) antes de seguir. Sem isso, se o redirecionamento
+        # demorar um pouco mais, a navegação seguinte roda ainda em cima da
+        # tela de login e nada do que vem depois encontra o que precisa.
+        self._fazer_login()
+        print("✅ Logado no RedeService.")
 
     def _esta_na_tela_login(self) -> bool:
         return bool(self.driver.find_elements(By.ID, "Login")) and bool(self.driver.find_elements(By.ID, "PasswordTextBox"))
 
-    def abrir_pagina_importacao(self, via_menu: bool = False):
+    def _abrir_formulario_importacao(self):
         """
-        Abre a página de Importação.
+        Abre o formulário de importação indo direto na URL .../Importacao/Incluir.
 
-        A navegação original (menu 'Trabalhos' -> li[@id='Importação']) depende
-        de um id com acento e de o submenu estar expandido/clicável — foi
-        exatamente onde a automação parava no runner. Aqui tentamos, em ordem:
-        o link direto pelo href, o item do menu, e por fim a URL direta.
+        Antes isso era feito clicando no botão "Novo" (`demo-btn-addrow`) e
+        esperando o modal abrir — e era aí que a automação mais emperrava (o
+        botão aparecia "clicável" antes do Angular terminar o binding, o
+        modal não abria, e a recuperação disso acabava refazendo login no
+        meio do fluxo). Ir direto pela URL, com a sessão já estabelecida,
+        pula esse passo inteiro.
         """
-        if via_menu:
-            try:
-                WebUtils.js_click(self.driver, self.wait.until(
-                    EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(.)='Trabalhos']"))
-                ))
-            except Exception:
-                print("⚠️ Menu 'Trabalhos' não respondeu; seguindo para os outros caminhos...")
-
-        seletores = [
-            (By.XPATH, "//a[@href='/cobranca.be.cartaotodos/Importacao']"),
-            (By.XPATH, "//li[@id='Importação']//a"),
-        ]
-        for by, sel in seletores:
-            try:
-                WebUtils.js_click(self.driver, WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((by, sel))
-                ))
-                WebDriverWait(self.driver, 15).until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
-                return
-            except Exception:
-                continue
-
-        print("⚠️ Não consegui abrir a Importação pelo menu; navegando direto pela URL...")
-        self.driver.get(self.URL_IMPORTACAO)
-
-        if self._esta_na_tela_login():
-            # A navegação direta também pode cair na tela de login (sessão
-            # não confirmada a tempo, ou o servidor exige login de novo).
-            # Refaz o login aqui mesmo, sem chamar login_and_navigate() de
-            # volta (evita recursão) — depois tenta a URL direta outra vez.
-            print("⚠️ Navegação direta caiu na tela de login; refazendo login...")
-            WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
-            WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
-            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
-            WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
-            self.driver.get(self.URL_IMPORTACAO)
-
-        self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
-        # Navegação direta pula o roteamento da SPA: o botão já aparece no DOM,
-        # mas o binding de eventos do Angular pode levar um instante a mais
-        # pra terminar. Sem essa pausa, o clique em "Novo" às vezes não abre
-        # o formulário (mesmo com o botão "clicável").
-        time.sleep(3)
-
-    def _abrir_modal_novo(self):
-        """Clica em 'Novo' e espera o formulário abrir; tenta de novo uma vez se não abrir."""
         for tentativa in range(2):
+            self.driver.get(self.URL_IMPORTACAO_NOVA)
+
             if self._esta_na_tela_login():
                 print("⚠️ A sessão caiu de volta para a tela de login do RedeService; refazendo login...")
-                self.login_and_navigate()
+                self._fazer_login()
+                self.driver.get(self.URL_IMPORTACAO_NOVA)
 
-            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
             try:
-                WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))
+                WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))
                 return
             except TimeoutException:
                 if tentativa == 0:
-                    motivo = "a sessão caiu para a tela de login" if self._esta_na_tela_login() else "motivo desconhecido"
-                    print(f"⚠️ Formulário de importação não abriu após clicar em 'Novo' ({motivo}); tentando de novo...")
-        raise TimeoutException("Formulário de importação (ddlTipoImportacao) não abriu após 2 tentativas.")
+                    print("⚠️ Formulário de importação não abriu pela URL direta; tentando de novo...")
+        raise TimeoutException(
+            f"Formulário de importação (ddlTipoImportacao) não abriu em {self.URL_IMPORTACAO_NOVA} após 2 tentativas."
+        )
+
+    def _fazer_login(self):
+        """Preenche e envia o formulário de login, esperando o pós-login terminar."""
+        WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
+        WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
+        WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
+        WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
 
     def _select_quando_disponivel(self, select_id: str, value: str, timeout: int = 15):
         """
@@ -894,10 +857,9 @@ class RedeServiceBot:
         print(f"✅ Arquivo carregado no Dropzone: {caminho_csv.name}")
 
     def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
-        if not is_first:
-            self.abrir_pagina_importacao()
-
-        self._abrir_modal_novo()
+        # Vai direto pro formulário pela URL (vale pra primeira base e pras
+        # seguintes) — não precisa passar pela grade e clicar em "Novo".
+        self._abrir_formulario_importacao()
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlcliente")))).select_by_value("000003")
         self._select_quando_disponivel("ddllayout", layout_value)
