@@ -969,6 +969,71 @@ class RedeServiceBot:
         except TimeoutException:
             print("⚠️ O nome do arquivo NÃO apareceu na tela — o Dropzone pode não ter aceitado.")
 
+        self._garantir_upload_concluido(caminho_csv)
+
+    def _garantir_upload_concluido(self, caminho_csv: Path, timeout: int = 180):
+        """
+        Espera o Dropzone terminar de ENVIAR o arquivo pro servidor.
+
+        O arquivo aparecer na tela só significa que entrou na fila do
+        Dropzone — não que subiu. Em produção o RedeService continuava
+        respondendo "Informe o(s) arquivo(s) para importação!" mesmo com o
+        nome do arquivo visível: a fila estava montada, o upload não tinha
+        acontecido.
+
+        Aqui consultamos a API do próprio Dropzone (`Dropzone.forElement`),
+        que expõe o status real de cada arquivo ('added'/'queued',
+        'uploading', 'success', 'error'). Se estiver parado na fila,
+        mandamos processar (`processQueue()`), que é justamente o que a
+        página faria se `autoProcessQueue` estivesse ligado.
+        """
+        estado_js = """
+            if (!window.Dropzone || !Dropzone.forElement) { return 'sem-dropzone'; }
+            var zona = document.querySelector('.dropzone');
+            if (!zona) { return 'sem-zona'; }
+            var dz;
+            try { dz = Dropzone.forElement(zona); } catch (e) { return 'sem-instancia'; }
+            if (!dz || !dz.files) { return 'sem-instancia'; }
+            return dz.files.map(function (f) { return f.name + '=' + f.status; }).join(' | ') || 'sem-arquivos';
+        """
+        processar_js = """
+            var zona = document.querySelector('.dropzone');
+            var dz = Dropzone.forElement(zona);
+            dz.processQueue();
+        """
+
+        estado = self.driver.execute_script(estado_js)
+        print(f"🔎 Estado do Dropzone: {estado}")
+
+        if estado in ("sem-dropzone", "sem-zona", "sem-instancia", "sem-arquivos"):
+            # Sem a API disponível não dá pra acompanhar; o upload pode ser
+            # feito no submit do formulário. Segue o fluxo — a checagem de
+            # recusa depois do Enviar continua valendo como rede de segurança.
+            print("ℹ️ Não consigo consultar a fila do Dropzone; seguindo assim mesmo.")
+            return
+
+        if "=queued" in estado or "=added" in estado:
+            print("⏫ Arquivo parado na fila do Dropzone; mandando processar...")
+            try:
+                self.driver.execute_script(processar_js)
+            except Exception as e:
+                print(f"⚠️ processQueue() falhou: {e}")
+
+        fim = time.time() + timeout
+        while time.time() < fim:
+            estado = self.driver.execute_script(estado_js)
+            if "=success" in estado:
+                print(f"✅ Upload concluído no Dropzone: {estado}")
+                return
+            if "=error" in estado:
+                raise RuntimeError(f"O Dropzone marcou o upload como erro: {estado}")
+            time.sleep(3)
+
+        raise RuntimeError(
+            f"O upload não terminou em {timeout}s (estado do Dropzone: {estado}). "
+            f"Enviar agora só geraria 'Informe o(s) arquivo(s) para importação'."
+        )
+
     # Unidade "AGIL SOLUÇÕES INTEGRADAS", conforme o passo a passo do usuário.
     # No modal antigo ela já vinha marcada por padrão (selected="selected"), por
     # isso o script nunca precisou mexer nela. Na página /Importacao/Incluir isso
