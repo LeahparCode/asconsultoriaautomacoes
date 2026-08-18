@@ -1,9 +1,9 @@
 {
-  "data": "17-08-2026",
-  "pbi": "falha",
+  "data": "18-08-2026",
+  "pbi": "sucesso",
   "pbi_contagens": {
     "inadimplencia": 13563,
-    "relacionamento": 25473,
-    "vendas": 127634
+    "relacionamento": 25503,
+    "vendas": 127625
   }
 }
