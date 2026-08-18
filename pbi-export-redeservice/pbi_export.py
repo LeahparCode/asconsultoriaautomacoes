@@ -770,10 +770,6 @@ class PowerBIBot:
 # ==========================================
 # AUTOMAÇÃO: REDE SERVICE
 # ==========================================
-class SessaoInvalidadaError(RuntimeError):
-    """O RedeService derrubou a sessão do robô (login duplicado em outro lugar)."""
-
-
 class RedeServiceBot:
     # A página de Importação é alcançável direto por URL — o próprio fluxo já
     # usa esse mesmo href para voltar entre uma base e outra.
@@ -786,39 +782,22 @@ class RedeServiceBot:
     def login_and_navigate(self):
         print("🌐 Iniciando importação no RedeService...")
         self.driver.get(RS_URL_IMPORT)
-        self._fazer_login()
-        self.abrir_pagina_importacao(via_menu=True)
-        print("✅ Logado e na página de Importação.")
-
-    def _esta_na_tela_login(self) -> bool:
-        # find_elements() só confere presença no DOM, não visibilidade — se o
-        # SPA mantém esses campos escondidos fora da tela de login (comum em
-        # Angular, reaproveitando o mesmo template), isso dava falso
-        # positivo em qualquer outra tela. Um falso positivo aqui dispara um
-        # login_and_navigate() desnecessário no meio do fluxo — logar de novo
-        # com a mesma conta tendo uma sessão já válida é candidato bem forte
-        # a ser o motivo do RedeService derrubar a sessão (sessaoInvalida=1)
-        # visto em produção, mesmo sem ninguém mais usando o mesmo login.
-        logins = [e for e in self.driver.find_elements(By.ID, "Login") if e.is_displayed()]
-        senhas = [e for e in self.driver.find_elements(By.ID, "PasswordTextBox") if e.is_displayed()]
-        return bool(logins) and bool(senhas)
-
-    def _fazer_login(self):
         WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
         WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
+
         # Espera o pós-login terminar de verdade (sair da tela de login)
         # antes de navegar. Sem isso, se o redirecionamento demorar um
         # pouco mais (o site mudou o frontend, pode ter ficado mais lento),
         # a navegação seguinte roda ainda em cima da tela de login e nada
         # do que vem depois encontra o que precisa.
         WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
-        # O formulário de login sair da tela não significa que a sessão já
-        # está firmada no servidor (visto em produção: a navegação seguinte
-        # caía de volta pro login, repetidas vezes, logo após um login que
-        # tinha acabado de "passar"). Dá um respiro pra sessão assentar
-        # antes de qualquer navegação subsequente.
-        time.sleep(4)
+
+        self.abrir_pagina_importacao(via_menu=True)
+        print("✅ Logado e na página de Importação.")
+
+    def _esta_na_tela_login(self) -> bool:
+        return bool(self.driver.find_elements(By.ID, "Login")) and bool(self.driver.find_elements(By.ID, "PasswordTextBox"))
 
     def abrir_pagina_importacao(self, via_menu: bool = False):
         """
@@ -860,7 +839,10 @@ class RedeServiceBot:
             # Refaz o login aqui mesmo, sem chamar login_and_navigate() de
             # volta (evita recursão) — depois tenta a URL direta outra vez.
             print("⚠️ Navegação direta caiu na tela de login; refazendo login...")
-            self._fazer_login()
+            WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "Login"))), RS_LOGIN)
+            WebUtils.safe_type(self.wait.until(EC.element_to_be_clickable((By.ID, "PasswordTextBox"))), RS_SENHA)
+            WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))))
+            WebDriverWait(self.driver, 30).until(lambda d: not self._esta_na_tela_login())
             self.driver.get(self.URL_IMPORTACAO)
 
         self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
@@ -874,7 +856,7 @@ class RedeServiceBot:
         """Clica em 'Novo' e espera o formulário abrir; tenta de novo uma vez se não abrir."""
         for tentativa in range(2):
             if self._esta_na_tela_login():
-                print(f"⚠️ A sessão caiu de volta para a tela de login do RedeService (URL: {self.driver.current_url}); refazendo login...")
+                print("⚠️ A sessão caiu de volta para a tela de login do RedeService; refazendo login...")
                 self.login_and_navigate()
 
             WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
@@ -912,24 +894,8 @@ class RedeServiceBot:
         print(f"✅ Arquivo carregado no Dropzone: {caminho_csv.name}")
 
     def importar_base(self, layout_value: str, caminho_csv: Path, is_first: bool = False):
-        if not is_first and not self._grade_visivel():
-            # Só navega se realmente saiu da página de Importação. Depois de
-            # uma importação confirmada, continuamos nela (a confirmação
-            # acabou de ler a grade ali mesmo) — e navegar de novo por
-            # driver.get() logo após uma importação foi, no log de produção,
-            # exatamente onde a sessão caía (sessaoInvalida=1) entre uma base
-            # e outra, mesmo com as duas anteriores tendo sido confirmadas.
+        if not is_first:
             self.abrir_pagina_importacao()
-
-        # Lê o topo da grade AGORA, antes de abrir o modal — já estamos na
-        # página da grade (abrir_pagina_importacao/_abrir_modal_novo exigem
-        # isso), então não precisa navegar. Ler isso depois do Enviar, com
-        # um driver.get(), foi o que coincidiu com a sessão sendo derrubada
-        # (sessaoInvalida=1) em produção: funcionava antes dessa checagem
-        # existir, e passou a falhar sempre depois que ela passou a navegar
-        # logo após o Enviar. "Novo" abre um modal por cima da própria
-        # grade — não precisa de reload nenhum pra ler ela.
-        topo_antes = self._linha_mais_recente_da_grade()
 
         self._abrir_modal_novo()
         SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
@@ -941,109 +907,8 @@ class RedeServiceBot:
         time.sleep(10)
 
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "btnEnviar"))))
-        print(f"📤 Clique em Enviar (Layout {layout_value}) feito; confirmando no histórico do RedeService...")
-
-        self._confirmar_importacao_no_grid(caminho_csv.name, topo_antes)
-        print(f"🚀 Importação (Layout {layout_value}) confirmada no histórico do RedeService!")
-
-    def _grade_visivel(self) -> bool:
-        """Estamos na página de Importação, com a grade e o botão 'Novo' prontos?"""
-        botoes = [e for e in self.driver.find_elements(By.ID, "demo-btn-addrow") if e.is_displayed()]
-        return bool(botoes) and self._linha_mais_recente_da_grade() is not None
-
-    def _linha_mais_recente_da_grade(self):
-        """
-        Lê a 1ª linha de dado da grade de histórico a partir do TEXTO
-        visível da página (body.text), sem depender de um seletor CSS pras
-        células.
-
-        Confirmado em produção: o seletor `td.grid-cell[data-name="log_arquivo"]`
-        (baseado no HTML que o usuário inspecionou manualmente) NUNCA deu
-        match, mesmo com a grade visivelmente populada — o diagnóstico de
-        erro capturava o texto certinho (cabeçalhos + linhas com
-        "CONCLUÍDO" e o nome do arquivo), mas o `presence_of_all_elements_located`
-        nunca encontrava nada em 180s de tentativas. Ler direto o texto
-        renderizado, que já provou duas vezes captar a grade corretamente,
-        evita depender desse seletor que não bate com o DOM real.
-
-        A grade é ordenada da mais recente pra mais antiga (confirmado no
-        print original do usuário), então a 1ª linha de dado logo depois
-        do cabeçalho "AÇÕES" é a mais recente.
-        """
-        try:
-            texto = self.driver.find_element(By.TAG_NAME, "body").text
-        except Exception:
-            return None
-        linhas = [l.strip() for l in texto.splitlines()]
-        try:
-            idx = linhas.index("AÇÕES")
-        except ValueError:
-            return None
-        for linha in linhas[idx + 1:]:
-            if linha:
-                return linha
-        return None
-
-    def _confirmar_importacao_no_grid(self, nome_arquivo: str, topo_antes, timeout: int = 180, intervalo: int = 8):
-        """
-        O RedeService não mostra NENHUMA confirmação na tela depois de
-        clicar em "Enviar" (nem toast, nem alerta) — confirmado com o
-        usuário, que também não vê nada ao importar manualmente. A única
-        forma de saber se a importação foi aceita de verdade é a mesma que
-        o usuário usa: conferir se surge uma linha nova, no topo da grade
-        de histórico (ordenada da mais recente pra mais antiga), contendo
-        o nome do arquivo que acabou de subir.
-
-        IMPORTANTE: não navega (driver.get) enquanto a página atual ainda
-        mostrar a grade — "Enviar" fecha um modal por cima da própria
-        grade, então ela já deve estar visível ali mesmo, sem reload. Um
-        reload logo depois do Enviar foi tentado antes e coincidiu, de
-        forma consistente, com a sessão do robô sendo derrubada pelo
-        RedeService (sessaoInvalida=1) — só recorre a um driver.get() como
-        recuperação, depois de algumas tentativas falhando na página atual.
-        """
-        fim = time.time() + timeout
-        topo_depois = topo_antes
-        tentativas_sem_navegar = 0
-
-        while time.time() < fim:
-            topo_depois = self._linha_mais_recente_da_grade()
-
-            if topo_depois and nome_arquivo in topo_depois and topo_depois != topo_antes:
-                return
-
-            tentativas_sem_navegar += 1
-            if tentativas_sem_navegar >= 3:
-                # A página atual não tem a grade — tenta recuperar com um
-                # reload explícito.
-                try:
-                    self.driver.get(self.URL_IMPORTACAO)
-                    if self._esta_na_tela_login():
-                        self._fazer_login()
-                        if "sessaoInvalida" in self.driver.current_url:
-                            # Confirmado em produção: a URL vira
-                            # ".../Login?sessaoInvalida=1" quando o
-                            # RedeService derruba a sessão do robô.
-                            raise SessaoInvalidadaError(
-                                "O RedeService derrubou a sessão do robô (sessaoInvalida=1) ao "
-                                f"tentar confirmar a importação de '{nome_arquivo}'. Login usado: "
-                                f"{RS_LOGIN}."
-                            )
-                        self.driver.get(self.URL_IMPORTACAO)
-                    time.sleep(3)
-                except SessaoInvalidadaError:
-                    raise
-                except Exception as e:
-                    print(f"⚠️ Reload de recuperação da grade falhou ({e}); tentando de novo...")
-                tentativas_sem_navegar = 0
-
-            time.sleep(intervalo)
-
-        raise RuntimeError(
-            f"'{nome_arquivo}' não apareceu como linha nova no topo do histórico de Importação do "
-            f"RedeService depois de {timeout}s (topo da grade continua sendo '{topo_depois}'). "
-            f"O clique em Enviar não gerou nenhuma importação de verdade."
-        )
+        print(f"🚀 Importação (Layout {layout_value}) enviada com sucesso!")
+        time.sleep(5)
 
 
 # ==========================================
@@ -1149,18 +1014,6 @@ def main():
             with open(nome_print.replace(".png", ".html"), "w", encoding="utf-8") as f:
                 f.write(driver_rs.page_source)
             print(f"HTML da página salvo em: {os.path.abspath(nome_print.replace('.png', '.html'))}")
-            # O artefato de diagnóstico (screenshot/HTML) nem sempre está
-            # acessível pra download depois (proxy/rede pode bloquear o
-            # blob storage). Imprime o essencial direto no log do job,
-            # que é sempre legível pela API do GitHub.
-            print(f"URL no momento do erro: {driver_rs.current_url}")
-            print("--- Texto visível da página no momento do erro (até 3000 chars) ---")
-            try:
-                texto_pagina = driver_rs.find_element(By.TAG_NAME, "body").text
-            except Exception:
-                texto_pagina = "(não consegui ler o texto do <body>)"
-            print(texto_pagina[:3000])
-            print("--- Fim do texto visível ---")
         except Exception as e2:
             print(f"Não consegui salvar screenshot/HTML de diagnóstico: {e2}")
         raise
