@@ -793,6 +793,29 @@ class RedeServiceBot:
         self._ir_para_importacao()
         print("✅ Logado e na página de Importação.")
 
+    # "AGIL SOLUÇÕES INTEGRADAS" — id e value confirmados num diagnóstico
+    # real da tela (#ddlunidade = '000001').
+    UNIDADE_VALUE = "000001"
+
+    def _selecionar(self, select_id: str, value: str, timeout: int = 40):
+        """
+        Espera a opção existir e então seleciona.
+
+        Os campos do formulário são encadeados (Tipo -> Unidade -> Cliente ->
+        Layout): cada seleção dispara o carregamento do próximo por AJAX.
+        Selecionar direto, sem esperar, funciona na máquina do usuário mas
+        estoura no runner, que é mais lento — foi o que aconteceu com o
+        Layout ("Cannot locate option with value: 79", com as opções
+        aparecendo na tela logo depois).
+        """
+        self.wait.until(EC.element_to_be_clickable((By.ID, select_id)))
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: d.find_elements(By.CSS_SELECTOR, f"#{select_id} option[value='{value}']")
+        )
+        SeleniumSelect(self.driver.find_element(By.ID, select_id)).select_by_value(value)
+        # Respiro pro AJAX do campo seguinte começar.
+        time.sleep(1.5)
+
     def _upload_dropzone(self, caminho_csv: Path):
         self.driver.execute_script("""
             document.querySelectorAll('.dropzone input[type="file"], input.dz-hidden-input').forEach(function(el) {
@@ -815,9 +838,18 @@ class RedeServiceBot:
             self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow")))
 
         WebUtils.js_click(self.driver, self.wait.until(EC.element_to_be_clickable((By.ID, "demo-btn-addrow"))))
-        SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlTipoImportacao")))).select_by_value("11")
-        SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddlcliente")))).select_by_value("000003")
-        SeleniumSelect(self.wait.until(EC.element_to_be_clickable((By.ID, "ddllayout")))).select_by_value(layout_value)
+
+        # Ordem do formulário: Tipo de importação -> Unidade -> Cliente ->
+        # Layout, e só DEPOIS o arquivo. Os campos são encadeados: cada um
+        # dispara o carregamento do seguinte por AJAX, então é preciso
+        # esperar a opção existir antes de selecionar (no runner, mais lento
+        # que a máquina do usuário, o Layout chegava a estourar com
+        # "Cannot locate option with value: 79" porque ainda não tinha
+        # carregado).
+        self._selecionar("ddlTipoImportacao", "11")
+        self._selecionar("ddlunidade", self.UNIDADE_VALUE)
+        self._selecionar("ddlcliente", "000003")
+        self._selecionar("ddllayout", layout_value)
 
         self._upload_dropzone(caminho_csv)
         print("⏳ Aguardando processamento do upload (10s)...")
