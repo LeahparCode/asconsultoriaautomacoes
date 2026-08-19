@@ -1,12 +1,9 @@
 {
-  "data": "18-08-2026",
-  "pbi": "falha",
+  "data": "19-08-2026",
+  "pbi": "sucesso",
   "pbi_contagens": {
-    "inadimplencia": 13563,
-    "relacionamento": 25503,
-    "vendas": 127625
-  },
-  "evo": "sucesso",
-  "tableau_primeira_execucao": "sucesso",
-  "gerar_perfil": "sucesso"
+    "inadimplencia": 9959,
+    "relacionamento": 23042,
+    "vendas": 127599
+  }
 }
