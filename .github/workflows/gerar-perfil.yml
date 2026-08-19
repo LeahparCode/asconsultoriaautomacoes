@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   gerar-perfil:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: gerar-perfil-redeservice

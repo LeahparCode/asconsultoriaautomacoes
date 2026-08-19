@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   pbi-export:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: pbi-export-redeservice
