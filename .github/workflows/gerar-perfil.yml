@@ -1,19 +1,13 @@
 name: Gerar Perfil - RedeService
 
 on:
-  # WORKFLOW PAUSADO a pedido do usuário (19/08/2026) — sem runner
-  # self-hosted disponível (sem cartão de crédito pra criar VM grátis) e
-  # sem querer gastar minutos do GitHub Actions em repo privado. Nenhum
-  # gatilho ativo: nem o botão "Run workflow" nem as chamadas do
-  # cron-job.org disparam nada enquanto "on:" estiver vazio assim.
-  #
-  # Pra reativar: descomente "workflow_dispatch: {}" abaixo. Pra também
-  # voltar o agendamento automático, descomente o bloco "schedule:"
-  # (horário: 08:19 BRT, segunda a sexta = "19 11 * * 1-5").
-  # workflow_dispatch: {}
+  # Reativado (19/08/2026): repositório passou a ser público, então o
+  # GitHub Actions roda ilimitado e sem custo. Agendamento automático
+  # segue pausado (só manual); pra reativar, descomente o bloco
+  # "schedule:" abaixo (horário: 08:19 BRT, segunda a sexta = "19 11 * * 1-5").
   # schedule:
   #   - cron: "19 11 * * 1-5"
-  {}
+  workflow_dispatch: {}
 
 permissions:
   contents: write

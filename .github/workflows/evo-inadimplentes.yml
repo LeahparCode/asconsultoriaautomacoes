@@ -1,19 +1,13 @@
 name: EVO AllpFit - Inadimplentes
 
 on:
-  # WORKFLOW PAUSADO a pedido do usuário (19/08/2026) — sem runner
-  # self-hosted disponível (sem cartão de crédito pra criar VM grátis) e
-  # sem querer gastar minutos do GitHub Actions em repo privado. Nenhum
-  # gatilho ativo: nem o botão "Run workflow" nem as chamadas do
-  # cron-job.org disparam nada enquanto "on:" estiver vazio assim.
-  #
-  # Pra reativar: descomente "workflow_dispatch: {}" abaixo. Pra também
-  # voltar o agendamento automático, descomente o bloco "schedule:"
-  # (horário: 07:13 BRT, todos os dias = "13 10 * * *").
-  # workflow_dispatch: {}
+  # Reativado (19/08/2026): repositório passou a ser público, então o
+  # GitHub Actions roda ilimitado e sem custo. Agendamento automático
+  # segue pausado (só manual); pra reativar, descomente o bloco
+  # "schedule:" abaixo (horário: 07:13 BRT, todos os dias = "13 10 * * *").
   # schedule:
   #   - cron: "13 10 * * *"
-  {}
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -76,13 +70,11 @@ jobs:
           path: evo-inadimplentes/erro_evo_*.png
           if-no-files-found: ignore
 
-      - name: Upload dos relatórios gerados (backup)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: relatorios-evo
-          path: evo-inadimplentes/downloads/**
-          if-no-files-found: ignore
+      # "Upload dos relatórios gerados" removido (19/08/2026): o repositório
+      # é público a partir de agora, e esse artefato continha a planilha de
+      # inadimplentes (CPF, nome, dívida) de clientes reais — dado pessoal
+      # de terceiros, baixável por qualquer um em repo público. Os relatórios
+      # continuam indo pro Google Drive normalmente (GDRIVE_FOLDER_*_ID).
 
       - name: Registrar sucesso no status diário
         if: success()

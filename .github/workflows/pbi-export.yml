@@ -1,19 +1,13 @@
 name: Power BI Export + Importacao RedeService
 
 on:
-  # WORKFLOW PAUSADO a pedido do usuário (19/08/2026) — sem runner
-  # self-hosted disponível (sem cartão de crédito pra criar VM grátis) e
-  # sem querer gastar minutos do GitHub Actions em repo privado. Nenhum
-  # gatilho ativo: nem o botão "Run workflow" nem as chamadas do
-  # cron-job.org disparam nada enquanto "on:" estiver vazio assim.
-  #
-  # Pra reativar: descomente "workflow_dispatch: {}" abaixo. Pra também
-  # voltar o agendamento automático, descomente o bloco "schedule:"
-  # (horário: 07:53 BRT, todos os dias = "53 10 * * *").
-  # workflow_dispatch: {}
+  # Reativado (19/08/2026): repositório passou a ser público, então o
+  # GitHub Actions roda ilimitado e sem custo. Agendamento automático
+  # segue pausado (só manual); pra reativar, descomente o bloco
+  # "schedule:" abaixo (horário: 07:53 BRT, todos os dias = "53 10 * * *").
   # schedule:
   #   - cron: "53 10 * * *"
-  {}
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -73,23 +67,19 @@ jobs:
           echo "Todas as tentativas falharam."
           exit 1
 
-      - name: Upload de artefatos (planilhas geradas)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pbi-export-output
-          path: pbi-export-redeservice/downloads/**
-          if-no-files-found: ignore
-
-      - name: Upload de diagnóstico em caso de erro (screenshot + HTML da página)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pbi-export-erro-diagnostico
-          path: |
-            pbi-export-redeservice/erro_*.png
-            pbi-export-redeservice/erro_*.html
-          if-no-files-found: ignore
+      # "Upload de artefatos (planilhas geradas)" removido (19/08/2026): o
+      # repositório é público a partir de agora, e esse artefato continha as
+      # planilhas de Inadimplência/Relacionamento/Vendas (CPF, nome, dívida)
+      # de clientes reais — dado pessoal de terceiros, baixável por qualquer
+      # um em repo público. Os relatórios continuam indo pro Google Drive
+      # normalmente (GDRIVE_FOLDER_PBI_ID).
+      #
+      # Pelo mesmo motivo, o diagnóstico de erro (screenshot + HTML da
+      # página) também deixou de subir como artefato público — a página do
+      # RedeService mostra dado de importação de clientes na tela. Em caso
+      # de falha, os arquivos erro_*.png/erro_*.html continuam sendo
+      # gerados no runner; peça pra eu ler o log da execução se precisar
+      # investigar.
 
       - name: Registrar sucesso no status diário (com contagens das bases)
         if: success()
