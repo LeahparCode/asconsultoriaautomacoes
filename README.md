@@ -13,7 +13,9 @@ Esses horários vieram dos controladores que eu já usava antes (`ControladorGer
 
 > ⚠️ **Importante: quem dispara essas automações NÃO é o `schedule:` do GitHub Actions.** Eu deixei ele comentado de propósito nos 4 `.yml` (dentro de `.github/workflows/`) — não é bug, é assim mesmo. Explico o motivo e como funciona de verdade logo abaixo, na seção 6.
 
-> **Atenção — Tableau roda até 11x por dia.** O `Controlador.py` original não faz uma extração única por mês: ele reexecuta o script **toda hora cheia** dentro do expediente (08h-18h, seg-sáb) pra manter o relatório sempre atualizado, e reproduzi esse comportamento. Isso dá ~66 execuções de navegador por semana só dessa automação — se a conta do GitHub tiver limite de minutos de Actions (planos gratuitos/Pro de repositórios privados têm cota mensal), vale ficar de olho no consumo em **Settings → Billing → Actions**.
+> **Atenção — Tableau roda até 11x por dia.** O `Controlador.py` original não faz uma extração única por mês: ele reexecuta o script **toda hora cheia** dentro do expediente (08h-18h, seg-sáb) pra manter o relatório sempre atualizado, e reproduzi esse comportamento. Isso dá ~66 execuções de navegador por semana só dessa automação.
+
+> **19/08/2026 — as 4 automações com navegador rodam num runner self-hosted, não mais no runner do GitHub.** O repositório é privado, e a soma dos minutos das 4 automações (principalmente o Tableau, de hora em hora) estourou a cota gratuita de Actions. Pra não pagar por minuto e não deixar o PC ligado o dia todo, `gerar-perfil.yml`, `evo-inadimplentes.yml`, `pbi-export.yml` e `tableau-agendamentos.yml` agora usam `runs-on: self-hosted`, apontando pra uma VM gratuita (Oracle Cloud Always Free) que fica sempre ligada só pra isso. Passo a passo completo na seção 9. Só o `resumo-diario.yml` (leve, sem navegador) continua no runner do GitHub — o consumo dele é insignificante.
 
 ## O que mudou em relação aos scripts originais
 
@@ -175,3 +177,63 @@ Como funciona:
 O aviso de **falha continua imediato**, sem passar pelo resumo — se algo quebrar às 10h da manhã eu quero saber na hora, não esperar o resumo do dia seguinte.
 
 Pra esse 5º job funcionar, precisei dar permissão de escrita pro `GITHUB_TOKEN` automático de cada workflow (`permissions: contents: write` no topo do `.yml`) — sem isso o `git push` do status falha. Como em teoria dois workflows podem terminar quase juntos e tentar commitar ao mesmo tempo, `commit_status.sh` tenta de novo (com `git pull --rebase`) até 3 vezes antes de desistir — nesse caso raríssimo, o campo daquela automação simplesmente não aparece no resumo daquele dia, mas o resto continua funcionando.
+
+### 9. Runner self-hosted numa VM gratuita (pra não gastar minutos do GitHub nem depender do meu PC)
+
+**Por quê.** Repositório privado + 4 automações com navegador (destaque pro Tableau, que roda de hora em hora) estourou a cota gratuita de minutos do GitHub Actions em poucos dias — o runner `ubuntu-latest` cobra por minuto de repositório privado. Duas saídas sem custo: deixar meu PC ligado o dia todo como runner (não quis) ou apontar os workflows pra uma **VM gratuita na nuvem**, sempre ligada, registrada como *runner self-hosted*. Escolhi a segunda.
+
+**Onde**: [Oracle Cloud "Always Free"](https://www.oracle.com/cloud/free/) — não é trial de 30 dias, é uma cota que fica grátis para sempre. Uso a shape `VM.Standard.E2.1.Micro` (1 OCPU, 1 GB RAM, arquitetura x86_64 — a mesma dos runners `ubuntu-latest` do GitHub, o que evita qualquer incompatibilidade do Chrome real que o `evo-inadimplentes` exige). A conta pede cartão só pra confirmar identidade; enquanto o uso ficar dentro do Always Free, não cobra nada.
+
+#### 9.1. Criar a conta e a VM na Oracle Cloud
+
+1. Crie a conta em [oracle.com/cloud/free](https://www.oracle.com/cloud/free/) (escolha bem a **home region** — depois não dá pra trocar, e é nela que os recursos Always Free ficam disponíveis).
+2. No Console, vá em **Compute → Instances → Create Instance**.
+3. Dê um nome (ex: `vm-automacoes`).
+4. Em **Image and shape**: clique em **Edit** (ou "Change image/shape"), escolha **Ubuntu 22.04** como imagem, e confirme que a shape é `VM.Standard.E2.1.Micro` (aparece marcada como "Always Free Eligible").
+5. Em **Networking**: mantenha a VCN/subnet padrão e deixe **"Assign a public IPv4 address"** marcado (precisa de IP público pra registrar o runner e o runner precisa de saída à internet).
+6. Em **Add SSH keys**: deixe a Oracle gerar um par de chaves e baixe a chave privada (`.key`), ou cole sua própria chave pública se já tiver uma. Sem isso não dá pra entrar na VM depois.
+7. Clique em **Create**.
+
+Se der erro **"Out of host capacity"** ao criar: é comum nesse tier gratuito, a região simplesmente não tem capacidade sobrando naquele instante. Tente de novo em outra hora do dia (funciona geralmente na madrugada) — não precisa mudar nada na configuração.
+
+#### 9.2. Entrar na VM
+
+Depois de criada, a instância mostra o **IP público** na tela de detalhes. No seu computador:
+
+```bash
+chmod 600 caminho/para/a-chave-baixada.key
+ssh -i caminho/para/a-chave-baixada.key ubuntu@SEU_IP_PUBLICO
+```
+
+(usuário `ubuntu` é o padrão da imagem Ubuntu da Oracle)
+
+#### 9.3. Gerar o token de registro do runner no GitHub
+
+No repositório: **Settings → Actions → Runners → New self-hosted runner → Linux**. A página mostra um bloco de comandos — o que interessa é a URL do repositório e o `--token XXXX` do comando `./config.sh`. **Esse token expira em cerca de 1 hora**, então gere ele já perto da hora de rodar o script abaixo.
+
+#### 9.4. Rodar o script de setup na VM
+
+Já dentro da VM (via SSH):
+
+```bash
+curl -fsSL -o setup_self_hosted_runner.sh \
+  https://raw.githubusercontent.com/LeahparCode/asconsultoriaautomacoes/Nomain/scripts/setup_self_hosted_runner.sh
+chmod +x setup_self_hosted_runner.sh
+./setup_self_hosted_runner.sh https://github.com/LeahparCode/asconsultoriaautomacoes <TOKEN_DO_PASSO_9.3>
+```
+
+O script (`scripts/setup_self_hosted_runner.sh`) faz tudo sozinho: atualiza o sistema, cria 4GB de swap (a VM só tem 1GB de RAM — o Chrome headless precisa dessa folga pra não travar), instala as bibliotecas que o Chrome exige pra abrir (a etapa "Instalar Google Chrome" dos workflows só baixa o binário, sem essas libs do sistema ele não roda), baixa e registra o runner, e instala ele como **serviço do systemd** — assim ele fica ouvindo por novos jobs o tempo todo e volta sozinho se a VM reiniciar.
+
+No final, confira em **Settings → Actions → Runners** no GitHub: deve aparecer o runner com uma bolinha verde **"Idle"**.
+
+#### 9.5. Testar
+
+Dispare qualquer um dos 4 workflows manualmente (**Actions → escolha o workflow → Run workflow**) e acompanhe o log — agora ele roda na VM, não mais num runner do GitHub, e não consome mais minuto nenhum da cota.
+
+#### 9.6. Manutenção
+
+- **Reboot da VM** (ex: depois de uma atualização do sistema): o runner volta sozinho, é um serviço do systemd.
+- **Ver se está rodando**: `sudo ~/actions-runner/svc.sh status` (dentro da VM).
+- **Runner sumiu/ficou offline**: entre por SSH e rode `sudo ~/actions-runner/svc.sh start`. Se nem isso resolver, o token de registro pode ter expirado — gere um novo (passo 9.3) e rode `./config.sh --url ... --token ... --replace` de novo dentro de `~/actions-runner`.
+- **Trocar de máquina/perdeu a VM**: repete os passos 9.1 a 9.4 numa VM nova. Nenhum dado importante mora na VM — os Secrets continuam no GitHub, o `git checkout` do workflow baixa o código a cada execução.
+- **Segurança**: como o repositório é privado e os workflows só disparam por `workflow_dispatch` (nunca por `pull_request` de gente de fora), não tem o risco clássico de runner self-hosted rodando código de PR desconhecido. Ainda assim, evite instalar outras coisas nessa VM além do necessário — ela guarda a mesma confiança que os Secrets do repositório.
