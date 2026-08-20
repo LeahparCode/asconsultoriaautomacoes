@@ -25,9 +25,13 @@ Exporta 3 relatórios do Power BI (Inadimplência, Relacionamento, Vendas), conv
 
    Se algum dia a importação da Inadimplência voltar a falhar e a de Relacionamento/Vendas (que sobem o `.xlsx` direto, sem conversão) continuar passando, **é aqui que se olha primeiro** — é o único ponto onde o arquivo gerado no runner difere do gerado na máquina do usuário.
 
-4. **O script não confirma se a importação foi aceita.** Depois de clicar em "Enviar" ele imprime "enviada com sucesso" e segue. O RedeService não mostra confirmação nenhuma na tela (nem manualmente aparece), então o script não tem como saber ali na hora se o backend aceitou. **Confira o histórico de Importação dentro do RedeService** pra ter certeza.
+4. **O script não confirma se a importação foi aceita.** Depois de clicar em "Enviar" ele imprime "enviada com sucesso" e segue. O RedeService não mostra confirmação nenhuma na tela (nem manualmente aparece), então o script não tem como saber ali na hora se o backend aceitou. **Confira o histórico de Importação dentro do RedeService** pra ter certeza. **Confirmado em 19/08/2026**: as 3 importações (Layout 79/81/82, na ordem Tipo → Unidade → Cliente → Layout, arquivo por último) rodaram de ponta a ponta sem erro e apareceram no histórico do RedeService.
 
-5. **Franquias**: Ilhéus foi removido de todos os relatórios (`FRANQUIAS` e `FRANQUIAS_VENDAS`), conforme a versão do usuário de 18/08/2026.
+5. **Ordem de preenchimento do formulário**: Tipo da importação → Unidade → Cliente → Layout, e só depois o upload do arquivo (`_selecionar("ddlTipoImportacao", ...)` → `ddlunidade` → `ddlcliente` → `ddllayout` → `_upload_dropzone(...)` em `importar_base()`). Os campos são encadeados via AJAX (cada um carrega as opções do seguinte), então `_selecionar()` espera a opção existir antes de selecionar — sem essa espera, o Layout falhava com `Cannot locate option with value: ...` no runner (mais lento que a máquina do usuário).
+
+6. **Artefatos removidos (19/08/2026, repositório público)**: nem as planilhas geradas nem o diagnóstico de erro (screenshot + HTML da página do RedeService) sobem mais como artefato da execução — são dado pessoal de cliente e tela do sistema de cobrança, e artefato em repo público é baixável por qualquer pessoa. As planilhas continuam indo pro Google Drive normalmente; em caso de erro, os arquivos `erro_*.png`/`erro_*.html` continuam sendo gerados no runner, só não sobem mais — peça pra eu ler o log da execução se precisar investigar.
+
+7. **Franquias**: Ilhéus foi removido de todos os relatórios (`FRANQUIAS` e `FRANQUIAS_VENDAS`), conforme a versão do usuário de 18/08/2026.
 
 ## Rodar localmente (opcional, para testar)
 

@@ -37,6 +37,8 @@ TABLEAU_EMAIL=... TABLEAU_SENHA=... python tableau_agendamentos.py
 
 `.github/workflows/tableau-agendamentos.yml` — roda **de hora em hora (minuto :29), das 08h às 18h, de segunda a sábado (Brasília)**, igual ao `Controlador.py` original: ele não faz uma extração única, e sim mantém o relatório sempre atualizado ao longo do expediente. O minuto `:29` (em vez de `:00` em ponto) evita o horário de maior fila/atraso do agendador do GitHub Actions — veja o README da raiz. Cada execução baixa o relatório do mês atual e salva numa subpasta com a data do dia dentro da pasta de destino no Drive (uma subpasta nova por dia) — dentro dela, cada nova execução no mesmo dia sobrescreve o mesmo arquivo `Agendamentos.csv` em vez de duplicar. Em caso de falha, tenta novamente até 3 vezes com 1 minuto de espera entre tentativas.
 
+**Desde 19/08/2026 (repositório público) o arquivo não sobe mais como artefato do GitHub Actions** — é dado pessoal de cliente (nome, horário de agendamento), e artefato em repo público é baixável por qualquer pessoa. O relatório continua indo pro Google Drive normalmente; se o upload falhar, o arquivo só existe no runner (efêmero) — peça pra eu ler o log da execução se precisar investigar um erro.
+
 Pode ser disparado manualmente em **Actions → Tableau - Relatorio de Agendamentos → Run workflow** (nesse caso ele roda com o mês/ano atuais, já que o `workflow_dispatch` não tem campos de input configurados — se quiser rodar para um mês específico manualmente, ajuste o `run:` do workflow temporariamente ou rode localmente).
 
 > Isso equivale a ~66 execuções por semana. Se isso for mais frequente do que o necessário (por exemplo, se bastasse rodar só 1x por dia), me avise que eu reduzo a frequência no `cron`.

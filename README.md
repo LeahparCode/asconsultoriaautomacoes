@@ -15,14 +15,14 @@ Esses horários vieram dos controladores que eu já usava antes (`ControladorGer
 
 > **Atenção — Tableau roda até 11x por dia.** O `Controlador.py` original não faz uma extração única por mês: ele reexecuta o script **toda hora cheia** dentro do expediente (08h-18h, seg-sáb) pra manter o relatório sempre atualizado, e reproduzi esse comportamento. Isso dá ~66 execuções de navegador por semana só dessa automação.
 
-> **19/08/2026 — as 4 automações com navegador rodam num runner self-hosted, não mais no runner do GitHub.** O repositório é privado, e a soma dos minutos das 4 automações (principalmente o Tableau, de hora em hora) estourou a cota gratuita de Actions. Pra não pagar por minuto e não deixar o PC ligado o dia todo, `gerar-perfil.yml`, `evo-inadimplentes.yml`, `pbi-export.yml` e `tableau-agendamentos.yml` agora usam `runs-on: self-hosted`, apontando pra uma VM gratuita (Oracle Cloud Always Free) que fica sempre ligada só pra isso. Passo a passo completo na seção 9. Só o `resumo-diario.yml` (leve, sem navegador) continua no runner do GitHub — o consumo dele é insignificante.
+> **19/08/2026 — o repositório é público, e todas as automações rodam no runner do próprio GitHub (`ubuntu-latest`).** A soma dos minutos das 4 automações com navegador (principalmente o Tableau, de hora em hora) estourou rápido a cota gratuita de Actions de repositório privado. Cheguei a cogitar um runner self-hosted numa VM gratuita (Oracle Cloud Always Free), mas travou no cadastro: a Oracle exige cartão de crédito físico e rejeita débito/pré-pago, inclusive cartão virtual — não tenho cartão de crédito. Sem VM grátis viável e sem querer deixar o PC ligado o dia todo como runner, a saída sem custo foi tornar o repositório **público**: Actions em repo público é ilimitado e gratuito, sem cartão. Detalhes e o que isso mudou na seção 9.
 
 ## O que mudou em relação aos scripts originais
 
 Os scripts originais rodavam no meu computador (Windows, com Google Drive Desktop mapeado como unidade `G:\` e, num caso, o Microsoft Excel instalado). Isso não existe num runner do GitHub Actions (uma máquina Linux efêmera na nuvem), então adaptei cada script:
 
 1. **Sem senha no código.** Todo login/senha vem de variáveis de ambiente, preenchidas a partir de **GitHub Secrets** (nunca aparecem no código-fonte nem nos logs).
-2. **Sem `G:\...` (Google Drive Desktop).** Os arquivos baixados são salvos numa pasta temporária local (dentro do runner) e depois enviados à mesma estrutura de pastas do Drive via **Google Drive API**. Se o upload falhar por qualquer motivo, o arquivo não se perde: fica disponível pra download manual na aba **Actions → (execução) → Artifacts** do GitHub por alguns dias.
+2. **Sem `G:\...` (Google Drive Desktop).** Os arquivos baixados são salvos numa pasta temporária local (dentro do runner) e depois enviados à mesma estrutura de pastas do Drive via **Google Drive API**. Antes de o repositório ficar público, se o upload falhasse o arquivo ficava disponível pra download manual em **Actions → (execução) → Artifacts**; **desde 19/08/2026 isso não existe mais pra `evo-inadimplentes`, `pbi-export-redeservice` e `tableau-agendamentos`** — esses relatórios têm dado pessoal de cliente (CPF, nome, dívida, agendamento), e artefato de execução em repo público é baixável por qualquer pessoa. Se o upload pro Drive falhar agora, o arquivo só existe no runner (efêmero) — peça pra eu ler o log da execução se precisar investigar. `gerar-perfil-redeservice` não tem relatório nenhum (só um clique de sistema) e continua subindo screenshot de erro como artefato normalmente, sem esse risco.
 3. **Sem Excel/`win32com`** (só no `pbi-export-redeservice`). A conversão de `.xlsx` pra `.csv` que dependia de abrir o Excel de verdade foi reescrita usando só `openpyxl`, sem precisar do Office instalado.
 
 ## Passo a passo geral de configuração
@@ -43,6 +43,8 @@ A automação passa a agir como se fosse eu mesmo (minha conta Google normal), u
 3. No meu computador, rodei o script `scripts/gerar_refresh_token_drive.py` (instruções no topo do arquivo): ele abre o navegador, faço login com a conta que tem acesso às pastas de destino e autorizo — no final ele imprime os 3 valores prontos pra colar nos Secrets do GitHub.
 4. Peguei o **ID de cada pasta de destino** (Relatórios EVO, Relatorios PBI, Agendamentos) sem precisar mover nada: abro a pasta no navegador e copio o trecho final da URL, depois de `folders/`.
    `https://drive.google.com/drive/folders/1AbCdEfGhIjKlmNoPQRstuVWxyz` → o ID é `1AbCdEfGhIjKlmNoPQRstuVWxyz`.
+
+> **O refresh token pode expirar/ser revogado** (aconteceu em 19/08/2026 — todas as execuções daquele dia falharam o upload com `invalid_grant: Token has been expired or revoked`, sem afetar o resto do script). Se acontecer de novo: gere um novo Client Secret em [Google Cloud Console → Credenciais](https://console.cloud.google.com/apis/credentials) (clique no cliente OAuth existente → "Add secret" — o Google só mostra o secret uma vez na criação, não dá pra recuperar o antigo), rode `scripts/gerar_refresh_token_drive.py` de novo com o Client ID/Secret, e atualize os 3 Secrets (`GDRIVE_OAUTH_CLIENT_ID`, `GDRIVE_OAUTH_CLIENT_SECRET`, `GDRIVE_OAUTH_REFRESH_TOKEN`) no GitHub.
 
 #### Opção B — Conta de serviço (exige Google Workspace)
 
@@ -146,6 +148,8 @@ Se algum dia eu quiser trocar o WhatsApp por e-mail/Telegram/Slack, é só troca
 
 **Pegadinha que me pegou na hora de ativar**: o `CALLMEBOT_PHONE` precisa ser **exatamente** o número que mandou a mensagem de ativação pro bot — mesma quantidade de dígitos, sem um `9` a mais nem a menos. Se o número no secret não bater direitinho com o que o CallMeBot tem cadastrado pra aquela apikey, ele responde `APIKey is invalid` mesmo com a apikey certa (a mensagem de erro engana, parece problema na apikey, mas era o telefone). Testei end-to-end forçando uma falha proposital numa branch descartável e só validei o `CALLMEBOT_APIKEY` como certo depois de ajustar o número — se acontecer nível "chega no log como sucesso mas não chega no WhatsApp", o primeiro lugar a olhar é a resposta que o CallMeBot devolve (dá pra adicionar um `echo` temporário no passo pra ver o corpo da resposta, foi assim que descobri).
 
+**Segunda pegadinha, essa depois de um tempo sem uso**: o CallMeBot pausa a conta sozinho "due to technical issues" depois de um período de inatividade — o workflow continua terminando com sucesso (a chamada HTTP responde 200), mas o corpo da resposta é uma página HTML dizendo `Your Account is Paused` em vez de confirmar o envio, e a mensagem não chega no WhatsApp. Não dá pra saber isso só pelo "✅" do GitHub Actions, só lendo o log do passo. Resolve mandando a palavra **`resume`** pro número do bot no WhatsApp (o número certo está sempre em [callmebot.com/whatsapp](https://www.callmebot.com/whatsapp/), pode mudar).
+
 Se um dia eu quiser voltar a usar só o `schedule:` do GitHub (por exemplo, se abandonar o cron-job.org), é só descomentar o bloco no `.yml` correspondente e desativar o job lá no painel deles, pra não disparar duas vezes.
 
 ### 8. Resumo diário no WhatsApp (em vez de um aviso por execução)
@@ -178,62 +182,20 @@ O aviso de **falha continua imediato**, sem passar pelo resumo — se algo quebr
 
 Pra esse 5º job funcionar, precisei dar permissão de escrita pro `GITHUB_TOKEN` automático de cada workflow (`permissions: contents: write` no topo do `.yml`) — sem isso o `git push` do status falha. Como em teoria dois workflows podem terminar quase juntos e tentar commitar ao mesmo tempo, `commit_status.sh` tenta de novo (com `git pull --rebase`) até 3 vezes antes de desistir — nesse caso raríssimo, o campo daquela automação simplesmente não aparece no resumo daquele dia, mas o resto continua funcionando.
 
-### 9. Runner self-hosted numa VM gratuita (pra não gastar minutos do GitHub nem depender do meu PC)
+### 9. Por que o repositório é público
 
-**Por quê.** Repositório privado + 4 automações com navegador (destaque pro Tableau, que roda de hora em hora) estourou a cota gratuita de minutos do GitHub Actions em poucos dias — o runner `ubuntu-latest` cobra por minuto de repositório privado. Duas saídas sem custo: deixar meu PC ligado o dia todo como runner (não quis) ou apontar os workflows pra uma **VM gratuita na nuvem**, sempre ligada, registrada como *runner self-hosted*. Escolhi a segunda.
+**O problema**: repositório privado + 4 automações com navegador (destaque pro Tableau, de hora em hora) estourou a cota gratuita de minutos do GitHub Actions em poucos dias — o runner `ubuntu-latest` cobra por minuto em repositório privado, e eu não queria pagar por isso.
 
-**Onde**: [Oracle Cloud "Always Free"](https://www.oracle.com/cloud/free/) — não é trial de 30 dias, é uma cota que fica grátis para sempre. Uso a shape `VM.Standard.E2.1.Micro` (1 OCPU, 1 GB RAM, arquitetura x86_64 — a mesma dos runners `ubuntu-latest` do GitHub, o que evita qualquer incompatibilidade do Chrome real que o `evo-inadimplentes` exige). A conta pede cartão só pra confirmar identidade; enquanto o uso ficar dentro do Always Free, não cobra nada.
+**Caminhos considerados e por que foram descartados:**
 
-#### 9.1. Criar a conta e a VM na Oracle Cloud
+- **Runner self-hosted numa VM gratuita** (Oracle Cloud Always Free): cheguei a documentar o passo a passo inteiro pra isso, mas travou logo no cadastro — a Oracle exige cartão de crédito físico pra validar a conta e **rejeita explicitamente** cartão de débito, virtual ou pré-pago (inclusive Nubank, que muita gente tenta). Sem cartão de crédito, não dá pra criar a conta.
+- **Outras nuvens grátis** (Google Cloud, AWS, Azure): todas pedem cartão também pra verificação antifraude — não resolve o mesmo problema.
+- **VPS "grátis pra sempre" sem cartão** (existem vários anunciados por aí): descartados por confiabilidade — são hospedagens de baixíssima procedência pra rodar login de sistema de cobrança com dado de cliente.
+- **Deixar meu próprio PC ligado 24h como runner**: funcionaria, mas não quis depender disso.
 
-1. Crie a conta em [oracle.com/cloud/free](https://www.oracle.com/cloud/free/) (escolha bem a **home region** — depois não dá pra trocar, e é nela que os recursos Always Free ficam disponíveis).
-2. No Console, vá em **Compute → Instances → Create Instance**.
-3. Dê um nome (ex: `vm-automacoes`).
-4. Em **Image and shape**: clique em **Edit** (ou "Change image/shape"), escolha **Ubuntu 22.04** como imagem, e confirme que a shape é `VM.Standard.E2.1.Micro` (aparece marcada como "Always Free Eligible").
-5. Em **Networking**: mantenha a VCN/subnet padrão e deixe **"Assign a public IPv4 address"** marcado (precisa de IP público pra registrar o runner e o runner precisa de saída à internet).
-6. Em **Add SSH keys**: deixe a Oracle gerar um par de chaves e baixe a chave privada (`.key`), ou cole sua própria chave pública se já tiver uma. Sem isso não dá pra entrar na VM depois.
-7. Clique em **Create**.
+**A solução sem custo e sem cartão**: tornar o repositório **público**. Actions em repositório público é do próprio GitHub, ilimitado e gratuito de verdade, sem pegadinha e sem prazo — só exigiu dois ajustes antes de virar a chave:
 
-Se der erro **"Out of host capacity"** ao criar: é comum nesse tier gratuito, a região simplesmente não tem capacidade sobrando naquele instante. Tente de novo em outra hora do dia (funciona geralmente na madrugada) — não precisa mudar nada na configuração.
+1. **Remover dos artefatos de execução tudo que tem dado pessoal de cliente.** Os relatórios de `evo-inadimplentes`, `pbi-export-redeservice` e `tableau-agendamentos` (CPF, nome, dívida, agendamento de clientes reais) e o diagnóstico de erro do PBI (screenshot + HTML da tela do RedeService) pararam de subir como artefato — em repo público, artefato é baixável por qualquer pessoa. Os relatórios continuam indo pro Google Drive normalmente, que já era o destino oficial; só o "backup extra" via artefato do GitHub é que saiu.
+2. **Os Secrets continuam privados independente da visibilidade do repositório** — isso nunca foi um problema; GitHub Secrets não ficam visíveis em repositório público nem em log nenhum. O risco era só os artefatos e o histórico do git (ver abaixo).
 
-#### 9.2. Entrar na VM
-
-Depois de criada, a instância mostra o **IP público** na tela de detalhes. No seu computador:
-
-```bash
-chmod 600 caminho/para/a-chave-baixada.key
-ssh -i caminho/para/a-chave-baixada.key ubuntu@SEU_IP_PUBLICO
-```
-
-(usuário `ubuntu` é o padrão da imagem Ubuntu da Oracle)
-
-#### 9.3. Gerar o token de registro do runner no GitHub
-
-No repositório: **Settings → Actions → Runners → New self-hosted runner → Linux**. A página mostra um bloco de comandos — o que interessa é a URL do repositório e o `--token XXXX` do comando `./config.sh`. **Esse token expira em cerca de 1 hora**, então gere ele já perto da hora de rodar o script abaixo.
-
-#### 9.4. Rodar o script de setup na VM
-
-Já dentro da VM (via SSH):
-
-```bash
-curl -fsSL -o setup_self_hosted_runner.sh \
-  https://raw.githubusercontent.com/LeahparCode/asconsultoriaautomacoes/Nomain/scripts/setup_self_hosted_runner.sh
-chmod +x setup_self_hosted_runner.sh
-./setup_self_hosted_runner.sh https://github.com/LeahparCode/asconsultoriaautomacoes <TOKEN_DO_PASSO_9.3>
-```
-
-O script (`scripts/setup_self_hosted_runner.sh`) faz tudo sozinho: atualiza o sistema, cria 4GB de swap (a VM só tem 1GB de RAM — o Chrome headless precisa dessa folga pra não travar), instala as bibliotecas que o Chrome exige pra abrir (a etapa "Instalar Google Chrome" dos workflows só baixa o binário, sem essas libs do sistema ele não roda), baixa e registra o runner, e instala ele como **serviço do systemd** — assim ele fica ouvindo por novos jobs o tempo todo e volta sozinho se a VM reiniciar.
-
-No final, confira em **Settings → Actions → Runners** no GitHub: deve aparecer o runner com uma bolinha verde **"Idle"**.
-
-#### 9.5. Testar
-
-Dispare qualquer um dos 4 workflows manualmente (**Actions → escolha o workflow → Run workflow**) e acompanhe o log — agora ele roda na VM, não mais num runner do GitHub, e não consome mais minuto nenhum da cota.
-
-#### 9.6. Manutenção
-
-- **Reboot da VM** (ex: depois de uma atualização do sistema): o runner volta sozinho, é um serviço do systemd.
-- **Ver se está rodando**: `sudo ~/actions-runner/svc.sh status` (dentro da VM).
-- **Runner sumiu/ficou offline**: entre por SSH e rode `sudo ~/actions-runner/svc.sh start`. Se nem isso resolver, o token de registro pode ter expirado — gere um novo (passo 9.3) e rode `./config.sh --url ... --token ... --replace` de novo dentro de `~/actions-runner`.
-- **Trocar de máquina/perdeu a VM**: repete os passos 9.1 a 9.4 numa VM nova. Nenhum dado importante mora na VM — os Secrets continuam no GitHub, o `git checkout` do workflow baixa o código a cada execução.
-- **Segurança**: como o repositório é privado e os workflows só disparam por `workflow_dispatch` (nunca por `pull_request` de gente de fora), não tem o risco clássico de runner self-hosted rodando código de PR desconhecido. Ainda assim, evite instalar outras coisas nessa VM além do necessário — ela guarda a mesma confiança que os Secrets do repositório.
+**Um detalhe que fica registrado**: o histórico antigo do git (de antes dessa mudança) tem uma senha do RedeService exposta num README antigo, de quando o repositório ainda era privado — decidiu-se aceitar esse risco em vez de reescrever o histórico. Se algum dia precisar reforçar isso, o caminho é trocar a senha no RedeService e reescrever o histórico do git antes de mexer em mais nada.
