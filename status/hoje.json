@@ -1,4 +1,10 @@
 {
   "data": "20-08-2026",
-  "evo": "sucesso"
+  "evo": "sucesso",
+  "pbi": "sucesso",
+  "pbi_contagens": {
+    "inadimplencia": 9959,
+    "relacionamento": 23042,
+    "vendas": 127599
+  }
 }
