@@ -19,6 +19,7 @@ Requisitos:
 
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -32,7 +33,16 @@ except Exception:
     pass
 
 # ================= CONFIGURAÇÕES =================
-URL_DO_SITE = "https://evo-abc-sec.w12app.com.br/#/acesso/allpfit/autenticacao"
+# O EVO redireciona entre hosts (em 21/08/2026 o log mostrou a navegação indo
+# de "evo-abc-sec" para "evo-abc-3" no meio do login). Se a W12 trocar de host
+# de novo, dá pra repontar sem mexer no código, pelo Secret/variável EVO_URL.
+# `or` em vez do default do .get(): no GitHub Actions, um secret que não existe
+# chega como string vazia (não como variável ausente), e o .get() devolveria "".
+URL_DO_SITE = (
+    os.environ.get("EVO_URL")
+    or "https://evo-abc-sec.w12app.com.br/#/acesso/allpfit/autenticacao"
+)
+ROTA_LOGIN = "/acesso/"  # trecho da URL que indica que ainda estamos na tela de autenticação
 LOGIN = os.environ.get("EVO_LOGIN")
 SENHA = os.environ.get("EVO_SENHA")
 HEADLESS_MODE = os.environ.get("EVO_HEADLESS", "true").lower() != "false"
@@ -44,8 +54,93 @@ TIMEOUT_MS = 25_000
 TIMEOUT_PRIMEIRA_CARGA_MS = 60_000  # a primeira carga do Angular costuma ser mais lenta
 TIMEOUT_DADOS_MS = 60_000  # elementos que dependem de dados vindos do backend (ex: contagem de inadimplentes)
 TIMEOUT_NETWORKIDLE_MS = 20_000  # espera a rede "acalmar" antes de contar o timeout do elemento de dados
-MAX_TENTATIVAS_POR_UNIDADE = 2  # 1 tentativa original + 1 retry com reload
+TIMEOUT_REDIRECT_MS = 30_000  # espera os redirecionamentos de host pararem antes de digitar no formulário
+TIMEOUT_LOGIN_MS = 60_000  # espera o login ser aceito (sair da rota de autenticação)
+MAX_TENTATIVAS_POR_UNIDADE = 2  # 1 tentativa original + 1 retry (refazendo o login, se preciso)
 # ===================================================
+
+
+def _texto_erro_login(page):
+    """Tenta capturar a mensagem que o EVO mostra na tela quando o login é recusado."""
+    for seletor in ["mat-error", ".mat-error", "[class*='toast']", "[class*='alert']"]:
+        try:
+            for elemento in page.query_selector_all(seletor):
+                if elemento.is_visible():
+                    texto = (elemento.inner_text() or "").strip()
+                    if texto:
+                        return texto
+        except Exception:
+            continue
+    return ""
+
+
+def esperar_url_estabilizar(page, timeout_ms=TIMEOUT_REDIRECT_MS):
+    """
+    Espera a URL parar de mudar.
+
+    O EVO faz um redirecionamento de host logo depois de abrir a página. Se o
+    formulário for preenchido antes desse redirecionamento terminar, o que foi
+    digitado vai junto com a página descartada e a aplicação reaparece na tela
+    de login — foi exatamente isso que quebrou a execução de 21/08/2026.
+    """
+    limite = time.monotonic() + timeout_ms / 1000
+    anterior = page.url
+    estavel_desde = time.monotonic()
+    while time.monotonic() < limite:
+        page.wait_for_timeout(500)
+        atual = page.url
+        if atual != anterior:
+            print(f"  ↪ redirecionado para: {atual}")
+            anterior = atual
+            estavel_desde = time.monotonic()
+        elif time.monotonic() - estavel_desde >= 2:
+            break
+    return page.url
+
+
+def fazer_login(page):
+    """Abre o EVO, espera os redirecionamentos, faz login e confirma que ele foi aceito."""
+    print("Abrindo o EVO...")
+    page.goto(URL_DO_SITE, wait_until="domcontentloaded")
+
+    url_estavel = esperar_url_estabilizar(page)
+    if url_estavel.split("#")[0].rstrip("/") != URL_DO_SITE.split("#")[0].rstrip("/"):
+        print(
+            f"⚠️  O EVO redirecionou para outro endereço: {url_estavel}\n"
+            f"   (configurado: {URL_DO_SITE})\n"
+            "   Se esse novo endereço virar o definitivo, aponte a variável EVO_URL pra ele."
+        )
+
+    print("Realizando Login (aguardando a página carregar completamente)...")
+    page.wait_for_selector("input#usuario", state="visible", timeout=TIMEOUT_PRIMEIRA_CARGA_MS)
+    page.fill("input#usuario", LOGIN)
+    page.fill("input#senha", SENHA)
+    page.click("button:has-text('entrar')")
+
+    # page.click() só dispara o clique, não espera o login terminar. Sem essa
+    # confirmação o script seguia direto pro dashboard e ficava 60s esperando um
+    # elemento que nunca ia aparecer, porque continuava na tela de login — e o
+    # erro final culpava "unidade sem inadimplentes", que não era o problema.
+    print("Confirmando que o login foi aceito...")
+    try:
+        page.wait_for_function(
+            f"() => !location.href.includes({ROTA_LOGIN!r})", timeout=TIMEOUT_LOGIN_MS
+        )
+    except PlaywrightTimeoutError:
+        detalhe = _texto_erro_login(page)
+        raise RuntimeError(
+            "Login não foi concluído: a aplicação continua na tela de autenticação "
+            f"({page.url}). "
+            + (
+                f"Mensagem exibida na tela: {detalhe!r}."
+                if detalhe
+                else "Nenhuma mensagem de erro visível na tela — pode ser credencial "
+                "inválida/expirada, bloqueio por excesso de tentativas, ou mudança "
+                "no fluxo de login do EVO."
+            )
+        ) from None
+
+    print(f"✅ Login concluído. URL atual: {page.url}")
 
 
 def extrair_dados_inadimplentes(page, nome_desejado, timeout_dados=TIMEOUT_DADOS_MS):
@@ -104,10 +199,10 @@ def extrair_dados_inadimplentes(page, nome_desejado, timeout_dados=TIMEOUT_DADOS
     page.click("xpath=//mat-icon[text()='close']")
 
 
-def extrair_com_retry(page, nome_desejado, url_recarregar=None):
+def extrair_com_retry(page, nome_desejado, relogin=None):
     """
-    Tenta extrair os dados da unidade. Se der timeout, recarrega a página e tenta
-    mais uma vez antes de desistir. Retorna True se conseguiu, False se falhou
+    Tenta extrair os dados da unidade. Se der timeout, tenta se recuperar e
+    repete uma vez antes de desistir. Retorna True se conseguiu, False se falhou
     mesmo após o retry (permite seguir para a próxima unidade sem abortar tudo).
     """
     for tentativa in range(1, MAX_TENTATIVAS_POR_UNIDADE + 1):
@@ -116,20 +211,35 @@ def extrair_com_retry(page, nome_desejado, url_recarregar=None):
             return True
         except PlaywrightTimeoutError as e:
             print(f"⚠️  Tentativa {tentativa}/{MAX_TENTATIVAS_POR_UNIDADE} falhou por timeout: {e}")
+            caiu_no_login = ROTA_LOGIN in page.url
             if tentativa < MAX_TENTATIVAS_POR_UNIDADE:
-                print("Recarregando a página e tentando novamente...")
-                if url_recarregar:
-                    page.goto(url_recarregar)
+                # Se a sessão caiu pra tela de login, recarregar não resolve —
+                # a página recarregada continua sendo a tela de login, e a 2ª
+                # tentativa falhava garantido. Nesse caso, refaz o login.
+                if caiu_no_login and relogin:
+                    print(f"A sessão voltou para a tela de login ({page.url}) — refazendo o login...")
+                    relogin()
                 else:
+                    print("Recarregando a página e tentando novamente...")
                     page.reload()
-                page.wait_for_timeout(3000)
+                    page.wait_for_timeout(3000)
             else:
                 nome_print = f"erro_evo_{nome_desejado}_{datetime.now().strftime('%H%M%S')}.png"
+                if caiu_no_login:
+                    motivo = (
+                        f"a aplicação está na tela de login ({page.url}), ou seja, a "
+                        f"sessão não se manteve — verifique as credenciais (EVO_LOGIN/"
+                        f"EVO_SENHA) e se o endereço do EVO mudou (variável EVO_URL)."
+                    )
+                else:
+                    motivo = (
+                        "isso costuma acontecer quando a unidade não tem inadimplentes "
+                        "no momento (o quadro não chega a aparecer) ou por instabilidade "
+                        "real do site."
+                    )
                 print(
                     f"❌ [ERRO] Falha definitiva na unidade '{nome_desejado}' após "
-                    f"{MAX_TENTATIVAS_POR_UNIDADE} tentativas. Isso costuma acontecer "
-                    f"quando a unidade não tem inadimplentes no momento (o quadro não "
-                    f"chega a aparecer) ou por instabilidade real do site."
+                    f"{MAX_TENTATIVAS_POR_UNIDADE} tentativas: {motivo}"
                 )
                 try:
                     page.screenshot(path=nome_print)
@@ -195,20 +305,14 @@ def iniciar_automacao():
         resultados = {}
 
         try:
-            # 1. Acessar o site
-            page.goto(URL_DO_SITE)
-
-            # ================= LOGIN =================
-            print("Realizando Login (aguardando a página carregar completamente)...")
-            page.wait_for_selector("input#usuario", state="visible", timeout=TIMEOUT_PRIMEIRA_CARGA_MS)
-            page.fill("input#usuario", LOGIN)
-            page.fill("input#senha", SENHA)
-            page.click("button:has-text('entrar')")
-            # ===========================================
+            # 1. Acessar o site e logar (já confirmando que o login foi aceito)
+            fazer_login(page)
 
             # 2. Primeira extração (Salvador - BA)
             print("\n--- Iniciando extração da unidade: Salvador - BA ---")
-            resultados["Salvador - BA"] = extrair_com_retry(page, "Salvador_Clientes")
+            resultados["Salvador - BA"] = extrair_com_retry(
+                page, "Salvador_Clientes", relogin=lambda: fazer_login(page)
+            )
 
             # 3. Trocar de unidade
             print("\n--- Trocando de unidade ---")
@@ -227,7 +331,9 @@ def iniciar_automacao():
 
                 # 4. Segunda extração (Pernambués)
                 print("\n--- Iniciando extração da unidade: Salvador Pernambues - BA ---")
-                resultados["Salvador Pernambués - BA"] = extrair_com_retry(page, "Pernambues_Clientes")
+                resultados["Salvador Pernambués - BA"] = extrair_com_retry(
+                    page, "Pernambues_Clientes", relogin=lambda: fazer_login(page)
+                )
             except Exception as e:
                 print(f"❌ [ERRO] Falha ao trocar de unidade para Pernambués: {e}")
                 resultados["Salvador Pernambués - BA"] = False

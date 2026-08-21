@@ -36,6 +36,9 @@ jobs:
         env:
           EVO_LOGIN: ${{ secrets.EVO_LOGIN }}
           EVO_SENHA: ${{ secrets.EVO_SENHA }}
+          # Opcional: só precisa existir se a W12 trocar o endereço do EVO
+          # (ex: evo-abc-sec -> evo-abc-3). Vazio = usa o padrão do script.
+          EVO_URL: ${{ secrets.EVO_URL }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
           GDRIVE_FOLDER_EVO_ID: ${{ secrets.GDRIVE_FOLDER_EVO_ID }}
           GDRIVE_IMPERSONATE_USER: ${{ secrets.GDRIVE_IMPERSONATE_USER }}
