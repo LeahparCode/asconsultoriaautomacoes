@@ -55,7 +55,8 @@ TIMEOUT_PRIMEIRA_CARGA_MS = 60_000  # a primeira carga do Angular costuma ser ma
 TIMEOUT_DADOS_MS = 60_000  # elementos que dependem de dados vindos do backend (ex: contagem de inadimplentes)
 TIMEOUT_NETWORKIDLE_MS = 20_000  # espera a rede "acalmar" antes de contar o timeout do elemento de dados
 TIMEOUT_REDIRECT_MS = 30_000  # espera os redirecionamentos de host pararem antes de digitar no formulário
-TIMEOUT_LOGIN_MS = 60_000  # espera o login ser aceito (sair da rota de autenticação)
+TIMEOUT_LOGIN_MS = 30_000  # espera o login ser aceito (sair da rota de autenticação)
+TENTATIVAS_LOGIN = 3  # o formulário Angular às vezes não registra a 1ª digitada; repetir resolve
 MAX_TENTATIVAS_POR_UNIDADE = 2  # 1 tentativa original + 1 retry (refazendo o login, se preciso)
 # ===================================================
 
@@ -98,47 +99,113 @@ def esperar_url_estabilizar(page, timeout_ms=TIMEOUT_REDIRECT_MS):
     return page.url
 
 
+def _digitar(campo, texto):
+    """Digita tecla a tecla. press_sequentially é o nome novo (Playwright >= 1.38)."""
+    if hasattr(campo, "press_sequentially"):
+        campo.press_sequentially(texto, delay=25)
+    else:  # compatibilidade com versões antigas, caso alguém rode localmente
+        campo.type(texto, delay=25)
+
+
+def _preencher_credenciais(page):
+    """
+    Preenche usuário e senha e devolve o botão "entrar".
+
+    Chamar page.fill() logo que o campo aparece no DOM não basta: o formulário é
+    Angular, e enquanto ele não termina de se inicializar o valor entra no campo
+    mas não chega ao modelo da aplicação. O "entrar" então submete um formulário
+    vazio, e a tela de login continua ali sem exibir erro nenhum.
+
+    Na execução de 21/08/2026 dava pra ver isso pelo relógio: as tentativas que
+    preencheram o formulário em 0,3s e 1,1s falharam, e a que levou 3,7s (ou
+    seja, esperou o formulário ficar pronto) passou.
+    """
+    campo_usuario = page.locator("input#usuario")
+    campo_senha = page.locator("input#senha")
+    botao = page.locator("button:has-text('entrar')")
+
+    campo_usuario.wait_for(state="visible", timeout=TIMEOUT_PRIMEIRA_CARGA_MS)
+    campo_senha.wait_for(state="visible", timeout=TIMEOUT_MS)
+    botao.wait_for(state="visible", timeout=TIMEOUT_MS)
+
+    # Dá tempo do Angular terminar de amarrar o formulário antes de digitar.
+    try:
+        page.wait_for_load_state("networkidle", timeout=TIMEOUT_NETWORKIDLE_MS)
+    except PlaywrightTimeoutError:
+        pass
+
+    for tentativa in range(1, 4):
+        campo_usuario.fill("")
+        _digitar(campo_usuario, LOGIN)
+        campo_senha.fill("")
+        _digitar(campo_senha, SENHA)
+
+        if campo_usuario.input_value() == LOGIN and campo_senha.input_value() == SENHA:
+            return botao
+
+        print(f"  ⚠️  O formulário não reteve o que foi digitado ({tentativa}/3); repetindo...")
+        page.wait_for_timeout(1500)
+
+    raise RuntimeError(
+        "Não foi possível preencher o formulário de login: os campos não retêm o "
+        "valor digitado (formulário provavelmente não terminou de inicializar)."
+    )
+
+
 def fazer_login(page):
     """Abre o EVO, espera os redirecionamentos, faz login e confirma que ele foi aceito."""
-    print("Abrindo o EVO...")
-    page.goto(URL_DO_SITE, wait_until="domcontentloaded")
+    ultimo_detalhe = ""
 
-    url_estavel = esperar_url_estabilizar(page)
-    if url_estavel.split("#")[0].rstrip("/") != URL_DO_SITE.split("#")[0].rstrip("/"):
-        print(
-            f"⚠️  O EVO redirecionou para outro endereço: {url_estavel}\n"
-            f"   (configurado: {URL_DO_SITE})\n"
-            "   Se esse novo endereço virar o definitivo, aponte a variável EVO_URL pra ele."
-        )
+    for tentativa in range(1, TENTATIVAS_LOGIN + 1):
+        print(f"Abrindo o EVO... (login {tentativa}/{TENTATIVAS_LOGIN})")
+        page.goto(URL_DO_SITE, wait_until="domcontentloaded")
 
-    print("Realizando Login (aguardando a página carregar completamente)...")
-    page.wait_for_selector("input#usuario", state="visible", timeout=TIMEOUT_PRIMEIRA_CARGA_MS)
-    page.fill("input#usuario", LOGIN)
-    page.fill("input#senha", SENHA)
-    page.click("button:has-text('entrar')")
-
-    # page.click() só dispara o clique, não espera o login terminar. Sem essa
-    # confirmação o script seguia direto pro dashboard e ficava 60s esperando um
-    # elemento que nunca ia aparecer, porque continuava na tela de login — e o
-    # erro final culpava "unidade sem inadimplentes", que não era o problema.
-    print("Confirmando que o login foi aceito...")
-    try:
-        page.wait_for_function(
-            f"() => !location.href.includes({ROTA_LOGIN!r})", timeout=TIMEOUT_LOGIN_MS
-        )
-    except PlaywrightTimeoutError:
-        detalhe = _texto_erro_login(page)
-        raise RuntimeError(
-            "Login não foi concluído: a aplicação continua na tela de autenticação "
-            f"({page.url}). "
-            + (
-                f"Mensagem exibida na tela: {detalhe!r}."
-                if detalhe
-                else "Nenhuma mensagem de erro visível na tela — pode ser credencial "
-                "inválida/expirada, bloqueio por excesso de tentativas, ou mudança "
-                "no fluxo de login do EVO."
+        url_estavel = esperar_url_estabilizar(page)
+        if url_estavel.split("#")[0].rstrip("/") != URL_DO_SITE.split("#")[0].rstrip("/"):
+            print(
+                f"⚠️  O EVO redirecionou para outro endereço: {url_estavel}\n"
+                f"   (configurado: {URL_DO_SITE})\n"
+                "   Se esse novo endereço virar o definitivo, aponte a variável EVO_URL pra ele."
             )
-        ) from None
+
+        print("Preenchendo o formulário de login...")
+        botao = _preencher_credenciais(page)
+        botao.click()
+
+        # botao.click() só dispara o clique, não espera o login terminar. Sem esta
+        # confirmação o script seguia direto pro dashboard e ficava 60s esperando um
+        # elemento que nunca ia aparecer, porque continuava na tela de login — e o
+        # erro final culpava "unidade sem inadimplentes", que não era o problema.
+        print("Confirmando que o login foi aceito...")
+        try:
+            page.wait_for_function(
+                f"() => !location.href.includes({ROTA_LOGIN!r})", timeout=TIMEOUT_LOGIN_MS
+            )
+        except PlaywrightTimeoutError:
+            ultimo_detalhe = _texto_erro_login(page)
+            print(
+                f"⚠️  Login {tentativa}/{TENTATIVAS_LOGIN} não completou — a aplicação "
+                f"continua em {page.url}."
+                + (f" Mensagem na tela: {ultimo_detalhe!r}." if ultimo_detalhe else "")
+            )
+            if tentativa < TENTATIVAS_LOGIN:
+                page.wait_for_timeout(3000)
+            continue
+
+        print(f"✅ Login concluído. URL atual: {page.url}")
+        return
+
+    raise RuntimeError(
+        f"Login não foi concluído após {TENTATIVAS_LOGIN} tentativas: a aplicação "
+        f"continua na tela de autenticação ({page.url}). "
+        + (
+            f"Mensagem exibida na tela: {ultimo_detalhe!r}."
+            if ultimo_detalhe
+            else "Nenhuma mensagem de erro visível na tela — pode ser credencial "
+            "inválida/expirada, bloqueio por excesso de tentativas, ou mudança "
+            "no fluxo de login do EVO."
+        )
+    )
 
     print(f"✅ Login concluído. URL atual: {page.url}")
 
